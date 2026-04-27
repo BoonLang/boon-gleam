@@ -1,0 +1,13 @@
+# Terminal Pong v0 deterministic smoke contract
+
+[test]
+category = "terminal"
+description = "Pong terminal smoke is deterministic"
+
+[output]
+text = "PONG 0:0"
+
+[terminal]
+ticks = 1000
+timeout_ms = 5000
+hash_after_1000 = "c855876943abfec1ce6152821df641bfb10c7444c0d7809f513a0b244e634f09"

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boonlang.org/schemas/boon-gleam/expected_action_schema.json",
+  "title": "Boon .expected Action",
+  "type": "array",
+  "prefixItems": [
+    {
+      "type": "string",
+      "enum": [
+        "assert_button_disabled",
+        "assert_button_enabled",
+        "assert_button_has_outline",
+        "assert_cells_cell_text",
+        "assert_cells_row_visible",
+        "assert_checkbox_checked",
+        "assert_checkbox_count",
+        "assert_checkbox_unchecked",
+        "assert_contains",
+        "assert_focused",
+        "assert_focused_input_value",
+        "assert_input_empty",
+        "assert_input_not_typeable",
+        "assert_input_placeholder",
+        "assert_input_typeable",
+        "assert_input_value",
+        "assert_not_contains",
+        "assert_not_focused",
+        "assert_toggle_all_darker",
+        "assert_url",
+        "clear_states",
+        "click_button",
+        "click_button_near_text",
+        "click_checkbox",
+        "click_checkbox_near_text",
+        "click_text",
+        "dblclick_cells_cell",
+        "dblclick_text",
+        "dblclick_text_nth",
+        "focus_input",
+        "hover_text",
+        "key",
+        "run",
+        "select_option",
+        "set_focused_input_value",
+        "set_input_value",
+        "set_slider_value",
+        "type",
+        "wait"
+      ]
+    }
+  ],
+  "items": {
+    "anyOf": [
+      { "type": "string" },
+      { "type": "integer" },
+      { "type": "number" },
+      { "type": "boolean" }
+    ]
+  }
+}

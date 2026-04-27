@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boonlang.org/schemas/boon-gleam/snapshot_schema.json",
+  "title": "Boon Runtime Snapshot",
+  "type": "object",
+  "required": ["text", "semantic_nodes"],
+  "properties": {
+    "text": { "type": "string" },
+    "semantic_nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/semantic_node" }
+    },
+    "terminal_canvas": { "$ref": "#/$defs/terminal_canvas" },
+    "diagnostics": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "semantic_node": {
+      "type": "object",
+      "required": ["id", "path", "text"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": "string" },
+        "text": { "type": "string" },
+        "kind": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "terminal_canvas": {
+      "type": "object",
+      "required": ["width", "height", "cells"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "cells": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/terminal_cell" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "terminal_cell": {
+      "type": "object",
+      "required": ["x", "y", "char"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "char": { "type": "string", "minLength": 1 },
+        "fg": { "$ref": "#/$defs/colour" },
+        "bg": { "$ref": "#/$defs/colour" }
+      },
+      "additionalProperties": false
+    },
+    "colour": {
+      "type": "object",
+      "required": ["r", "g", "b"],
+      "properties": {
+        "r": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "g": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "b": { "type": "integer", "minimum": 0, "maximum": 255 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

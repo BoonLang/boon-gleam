@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boonlang.org/schemas/boon-gleam/backend_api_schema.json",
+  "title": "Boon Backend HTTP API",
+  "type": "object",
+  "required": ["endpoints"],
+  "properties": {
+    "endpoints": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/endpoint" }
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "object",
+      "required": ["method", "path", "success_status"],
+      "properties": {
+        "method": { "enum": ["GET", "POST"] },
+        "path": { "type": "string", "minLength": 1 },
+        "success_status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "request": { "type": "object" },
+        "response": { "type": "object" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "endpoints": [
+    { "method": "GET", "path": "/health", "success_status": 200 },
+    { "method": "GET", "path": "/projects", "success_status": 200 },
+    { "method": "POST", "path": "/projects", "success_status": 201 },
+    { "method": "GET", "path": "/projects/:project_id", "success_status": 200 },
+    { "method": "POST", "path": "/projects/:project_id/compile", "success_status": 200 },
+    { "method": "POST", "path": "/projects/:project_id/sessions", "success_status": 201 },
+    { "method": "GET", "path": "/projects/:project_id/sessions/:session_id/snapshot", "success_status": 200 },
+    { "method": "GET", "path": "/projects/:project_id/sessions/:session_id/events", "success_status": 200 },
+    { "method": "POST", "path": "/projects/:project_id/sessions/:session_id/clear", "success_status": 200 }
+  ]
+}

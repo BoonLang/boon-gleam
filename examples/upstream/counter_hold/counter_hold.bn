@@ -1,0 +1,21 @@
+document: Document/new(root: Element/stripe(
+    element: []
+    direction: Column
+    gap: 0
+    style: []
+
+    items: LIST {
+        counter
+        increment_button
+    }
+))
+
+counter: 0 |> HOLD counter {
+    increment_button.event.press |> THEN { counter + 1 }
+}
+
+increment_button: Element/button(
+    element: [event: [press: LINK]]
+    style: []
+    label: TEXT { + }
+)

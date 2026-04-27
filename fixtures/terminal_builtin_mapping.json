@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boonlang.org/schemas/boon-gleam/terminal_builtin_mapping.json",
+  "builtins": {
+    "Terminal.Canvas": "src/terminal/canvas.gleam",
+    "Terminal.Pong": "src/terminal/pong.gleam",
+    "Terminal.Arkanoid": "src/terminal/arkanoid.gleam"
+  }
+}

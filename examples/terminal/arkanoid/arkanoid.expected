@@ -1,0 +1,13 @@
+# Terminal Arkanoid v1 deterministic smoke contract
+
+[test]
+category = "terminal"
+description = "Arkanoid terminal smoke is deterministic"
+
+[output]
+text = "ARKANOID score 0"
+
+[terminal]
+ticks = 1000
+timeout_ms = 5000
+hash_after_1000 = "db87e83afc59c5d3bfd4eda4db8feea4fb9a18bb2dd8b059a402ecebd0230744"

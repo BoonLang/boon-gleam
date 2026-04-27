@@ -1,0 +1,7 @@
+game: Terminal/pong(
+    width: 40
+    height: 12
+    left_paddle: 5
+    right_paddle: 5
+    ball: [x: 20, y: 6, vx: 1, vy: 1]
+)

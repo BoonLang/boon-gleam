@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boonlang.org/schemas/boon-gleam/protocol_schema.json",
+  "title": "Boon Durable WebSocket Protocol",
+  "oneOf": [
+    { "$ref": "#/$defs/client_subscribe" },
+    { "$ref": "#/$defs/client_event" },
+    { "$ref": "#/$defs/client_get_snapshot" },
+    { "$ref": "#/$defs/client_ping" },
+    { "$ref": "#/$defs/server_snapshot" },
+    { "$ref": "#/$defs/server_event_ack" },
+    { "$ref": "#/$defs/server_event_reject" },
+    { "$ref": "#/$defs/server_diagnostic" },
+    { "$ref": "#/$defs/server_pong" }
+  ],
+  "$defs": {
+    "client_subscribe": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "subscribe" } },
+      "additionalProperties": false
+    },
+    "client_event": {
+      "type": "object",
+      "required": ["type", "event_id", "expected_revision", "event"],
+      "properties": {
+        "type": { "const": "event" },
+        "event_id": { "type": "string", "minLength": 1 },
+        "expected_revision": { "type": "integer", "minimum": 0 },
+        "event": { "$ref": "#/$defs/event" }
+      },
+      "additionalProperties": false
+    },
+    "client_get_snapshot": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "get_snapshot" } },
+      "additionalProperties": false
+    },
+    "client_ping": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "ping" } },
+      "additionalProperties": false
+    },
+    "server_snapshot": {
+      "type": "object",
+      "required": ["type", "revision", "snapshot"],
+      "properties": {
+        "type": { "const": "snapshot" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "snapshot": { "$ref": "snapshot_schema.json" }
+      },
+      "additionalProperties": false
+    },
+    "server_event_ack": {
+      "type": "object",
+      "required": ["type", "event_id", "revision"],
+      "properties": {
+        "type": { "const": "event_ack" },
+        "event_id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "server_event_reject": {
+      "type": "object",
+      "required": ["type", "event_id", "reason", "current_revision"],
+      "properties": {
+        "type": { "const": "event_reject" },
+        "event_id": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "current_revision": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "server_diagnostic": {
+      "type": "object",
+      "required": ["type", "diagnostic"],
+      "properties": {
+        "type": { "const": "diagnostic" },
+        "diagnostic": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "server_pong": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "pong" } },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "link_id": { "type": "string" },
+        "text": { "type": "string" },
+        "key": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  }
+}
