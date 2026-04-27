@@ -1,134 +1,73 @@
-# Boon-Gleam Architecture and Implementation Plan
+# Boon-Gleam Implementation Contract
 
-Place this file at the root of the future `boon-gleam` repository as:
+This file is the canonical implementation contract for `boon-gleam`.
+Keep it at the repository root as `BOON_GLEAM_IMPLEMENTATION_PLAN.md`.
+If an `AGENTS.md` file is added later, it must point to this file instead of
+duplicating or weakening it.
+
+`boon-gleam` exists to build a Gleam implementation and codegen backend for
+Boon:
 
 ```text
-AGENTS.md
+Boon source project
+  -> Gleam Boon frontend
+  -> HIR
+  -> SourceShape
+  -> FlowIR
+  -> generated Gleam core
+  -> terminal, backend, or web adapter
 ```
 
-or:
+The required outcome is a deterministic generated Boon core plus adapters for:
 
 ```text
-BOON_GLEAM_IMPLEMENTATION_PLAN.md
+terminal_tui_beam
+durable_backend_beam
+web_frontend_js
 ```
 
-This is a clean-slate plan for a Gleam implementation and codegen backend for Boon.
+The generated app core is pure:
+
+```gleam
+pub fn init(context: InitContext) -> State
+pub fn update(state: State, event: Event) -> #(State, List(Effect))
+pub fn view(state: State) -> Snapshot
+```
+
+The BEAM/runtime layers own process scheduling, timers, persistence,
+durability, supervision, terminal event loops, and backend client sessions.
+The generated core must not import OTP, HTTP, database, terminal, browser,
+filesystem, or wall-clock APIs.
+
+No passing result may be produced by skipping examples, hiding examples,
+hardcoding named outputs, returning empty snapshots, accepting unsupported
+syntax, ignoring expected files, accepting events without state updates,
+rewriting Boon semantics in adapters, or pretending durability without a real
+event log. Unsupported features must fail with named diagnostics.
 
 ---
 
-## 0. Executive summary
+## 1. Scope And Non-Goals
 
-`boon-gleam` explores Boon as a typed, distributed, durable, full-stack reactive language on Gleam.
+`boon-gleam` targets typed, distributed, durable, full-stack reactive Boon on
+Gleam. The first complete track is terminal and BEAM backend behavior. Gleam JS
+and Lustre are allowed only for the web-client target.
 
-The goal is not to beat Zig/Pony/C/Rust at raw native rendering speed. The goal is to use Gleam and the BEAM runtime for:
+In scope:
 
 ```text
 typed generated Boon state machines
 actor-based app sessions
 supervised runtime processes
 durable event logs and snapshots
-terminal playgrounds
-playable terminal examples such as Pong and Arkanoid
+terminal playground
+playable terminal Pong in v0
+playable terminal Arkanoid in v1
 HTTP/WebSocket backend sessions
-optional web frontends through Gleam JavaScript + Lustre
+Gleam JS + Lustre client experiments
 ```
 
-The core model is:
-
-```text
-Boon source project
-  -> Gleam Boon compiler frontend
-  -> Boon IR
-  -> generated Gleam core
-  -> target adapter
-
-Targets:
-  terminal_tui_beam
-  durable_backend_beam
-  web_frontend_js
-```
-
-The core generated app must be pure and deterministic:
-
-```text
-init(context) -> State
-
-update(state, event) -> #(State, List(Effect))
-
-view(state) -> DocumentSnapshot | TerminalCanvasSnapshot | SceneSnapshot
-```
-
-The BEAM actor/runtime layers own:
-
-```text
-message ordering
-timers
-persistence
-durability
-supervision
-backend client sessions
-terminal event loops
-```
-
-The generated Boon core should not directly depend on OTP, HTTP, database, terminal, or browser packages unless that target adapter requires it.
-
----
-
-## 1. Why Gleam?
-
-Gleam is interesting for Boon because it targets both:
-
-```text
-Erlang/BEAM
-JavaScript
-```
-
-This makes it a good candidate for a Boon backend that wants both:
-
-```text
-durable distributed server-side state
-frontend/client-side rendering experiments
-```
-
-Gleam is statically typed and functional, while the BEAM target gives access to Erlang/OTP style actors, supervision, timers, distributed processes, and long-running fault-tolerant applications.
-
-This fits Boon well:
-
-```text
-Boon LINK event        -> typed message/event
-Boon HOLD state        -> actor/session state
-Boon Timer/interval    -> scheduled message
-Boon Router/go_to      -> route event/effect
-Boon document snapshot -> view-model projection
-Boon terminal canvas   -> TUI frame projection
-Boon expected files    -> deterministic event script
-```
-
-The strongest motivation for `boon-gleam` is:
-
-```text
-Boon as a durable, distributed, reactive app language.
-```
-
-The second motivation is:
-
-```text
-Boon as a terminal/game playground on BEAM.
-```
-
-The third motivation is:
-
-```text
-Boon as a possible shared frontend/backend language through Gleam JS and Gleam BEAM targets.
-```
-
----
-
-## 2. Non-goals
-
-Do not turn this repository into a graphics engine or native systems runtime.
-
-Out of scope for this repository:
+Out of scope:
 
 ```text
 Raybox
@@ -140,116 +79,94 @@ WGSL
 Slang
 Dawn
 wgpu-native
-freestanding Wasm
+native GPU rendering
 3D rendering
 3D printing
-physical GPU rendering
+freestanding Wasm runtime work
 native binary codegen
 Pony codegen
 Zig codegen
 Rust codegen
 ```
 
-`boon-gleam` may later talk to a renderer or frontend through snapshots and WebSockets, but it does not implement Raybox.
+The phrase "no browser tooling" must not be used in this repo. It conflicts
+with the selected Gleam JS + Lustre web-client target. The actual prohibition is
+no WebGPU, no native/browser renderer experiment, and no separate Wasm runtime
+outside the Gleam JS target.
 
 ---
 
-## 3. Fixed initial stack
+## 2. Version Pins And Preconditions
 
-Use this stack for the first implementation.
-
-### Language and build
-
-```text
-Language:
-  Gleam
-
-Primary runtime:
-  Erlang/BEAM
-
-Secondary runtime:
-  JavaScript target for web frontend experiments
-
-Build tool:
-  gleam
-```
-
-### Core dependencies
-
-Use these as the initial dependencies:
+These pins were checked on 2026-04-27. Update them only in a dedicated
+dependency-pin change with a short note explaining why.
 
 ```text
-gleam_stdlib
-gleam_erlang
-gleam_otp
-gleam_json
+Toolchain:
+  Gleam: 1.16.0
+  Erlang/OTP: 28.5
+
+Required local preflight:
+  gleam --version
+  erl -eval 'erlang:display(erlang:system_info(otp_release)), halt().' -noshell
+
+Current machine note:
+  On 2026-04-27, both `gleam` and `erl` were missing from PATH in this repo.
+  Phase 0 must install or expose them before any build gate can pass.
 ```
 
-### Terminal frontend
+Initial Hex dependencies:
 
-Use this stack first:
+```toml
+[dependencies]
+gleam_stdlib = "1.0.0"
+gleam_erlang = "1.3.0"
+gleam_otp = "1.2.0"
+gleam_json = "3.1.0"
+etch = "1.3.3"
+mist = "6.0.3"
+shelf = "1.0.0"
+pog = "4.1.0"
+
+[dev-dependencies]
+lustre = "5.6.0"
+```
+
+Dependency rules:
 
 ```text
-Etch:
-  terminal event/output backend
-
-gleam_community_ansi:
-  fallback ANSI styling and debugging output
+Etch is the only terminal backend for v0.
+Mist is the only HTTP/WebSocket server for v0/v1.
+Shelf is the only local DETS/ETS-backed store for v1.
+Pog is the only PostgreSQL client for the durable backend milestone.
+Lustre is allowed only for the web-client target.
+Do not add Wisp unless a later plan changes the backend routing contract.
+Do not add gleam_community_ansi for v0; use Etch and minimal ANSI output.
 ```
 
-Do not start by using multiple TUI frameworks. Etch is the primary terminal backend for v0.
-
-### Backend server
-
-Use this stack first:
+Pinned source repositories:
 
 ```text
-Mist:
-  HTTP/WebSocket server
+Boon corpus:
+  repo: https://github.com/BoonLang/boon
+  commit: 34251e2938a73f05de14997e167630bb0124ef48
+  source root: playground/frontend/src/examples/
 
-gleam_otp:
-  actors, supervisors, process messaging
-
-gleam_json:
-  protocol encoding/decoding
+boon-zig terminal behavior reference:
+  repo: https://github.com/BoonLang/boon-zig
+  commit: c083ddc2adc4af92d9a1a585a81d5c7af395efb2
+  use: terminal Pong/Arkanoid behavior and terminal verification inspiration
 ```
-
-Do not start with a large web framework. Add Wisp only if direct Mist routing becomes painful.
-
-### Durable storage
-
-Use two storage implementations:
-
-```text
-Local development store:
-  DETS/ETS-backed store, through shelf/slate/bravo if practical
-
-Production durable store:
-  PostgreSQL through pog
-```
-
-The store interface must be abstract. The first durable backend may use local DETS/ETS; the Postgres backend is required before declaring the distributed backend complete.
-
-### Web frontend
-
-Use:
-
-```text
-Lustre:
-  Gleam web frontend framework
-```
-
-The Lustre target is optional for early terminal/backend milestones but part of the long-term architecture.
 
 ---
 
-## 4. Repository layout
+## 3. Repository Layout
 
-Use this layout:
+Use this layout. Add files as their phase requires them; do not create empty
+placeholders except `.gitkeep` files needed to preserve directories.
 
 ```text
 boon-gleam/
-  AGENTS.md
   BOON_GLEAM_IMPLEMENTATION_PLAN.md
   README.md
   gleam.toml
@@ -257,153 +174,32 @@ boon-gleam/
 
   examples/
     upstream/
-      minimal/
-      hello_world/
-      counter/
-      todo_mvc/
-      ...
-
     terminal/
       pong/
-        pong.bn
-        pong.expected
       arkanoid/
-        arkanoid.bn
-        arkanoid.expected
 
   fixtures/
     corpus_manifest.json
     expected_action_schema.json
     protocol_schema.json
     backend_api_schema.json
+    snapshot_schema.json
+    terminal_builtin_mapping.json
 
   src/
     boongleam.gleam
-
     cli/
-      command.gleam
-      args.gleam
-      command_tui.gleam
-      command_play.gleam
-      command_compile.gleam
-      command_codegen.gleam
-      command_serve.gleam
-      command_verify.gleam
-      command_verify_all.gleam
-      command_bench.gleam
-
     frontend/
-      source_file.gleam
-      span.gleam
-      diagnostic.gleam
-      token.gleam
-      lexer.gleam
-      parser.gleam
-      ast.gleam
-
     project/
-      project.gleam
-      project_loader.gleam
-      module_resolver.gleam
-      virtual_file_system.gleam
-      upstream_importer.gleam
-      corpus_manifest.gleam
-
     lowering/
-      resolver.gleam
-      hir.gleam
-      flow_ir.gleam
-      type_facts.gleam
-      dependency_graph.gleam
-
     codegen/
-      gleam_writer.gleam
-      name_mangle.gleam
-      codegen_context.gleam
-      generate_project.gleam
-      generate_core_types.gleam
-      generate_state.gleam
-      generate_update.gleam
-      generate_view.gleam
-      generate_effects.gleam
-      generate_encoders.gleam
-      generate_terminal_target.gleam
-      generate_backend_target.gleam
-      generate_lustre_target.gleam
-
     runtime/
-      boon_value.gleam
-      document.gleam
-      scene.gleam
-      style.gleam
-      event.gleam
-      effect.gleam
-      terminal_canvas.gleam
-      semantic_tree.gleam
-      encode.gleam
-      decode.gleam
-      virtual_clock.gleam
-      metrics.gleam
-
     terminal/
-      tui_app.gleam
-      tui_model.gleam
-      tui_update.gleam
-      tui_view.gleam
-      etch_backend.gleam
-      terminal_canvas_renderer.gleam
-      terminal_input.gleam
-      terminal_diff.gleam
-      keyboard.gleam
-      game_loop.gleam
-      frame_timer.gleam
-
     backend/
-      server.gleam
-      routes.gleam
-      websocket.gleam
-      protocol.gleam
-      app_supervisor.gleam
-      session_supervisor.gleam
-      session_registry.gleam
-      session_actor.gleam
-      client_actor.gleam
-      timer_actor.gleam
-      pubsub.gleam
-      event_log.gleam
-      snapshot_store.gleam
-      store.gleam
-      store_memory.gleam
-      store_local.gleam
-      store_postgres.gleam
-
     web/
-      lustre_app.gleam
-      lustre_update.gleam
-      lustre_view.gleam
-      websocket_client.gleam
-
     verify/
-      expected_parser.gleam
-      expected_runner.gleam
-      semantic_query.gleam
-      terminal_frame_query.gleam
-      backend_verify.gleam
-      durability_verify.gleam
-      verification_report.gleam
-
     bench/
-      bench_runner.gleam
-      bench_report.gleam
-
     support/
-      json.gleam
-      path.gleam
-      stable_hash.gleam
-      text_builder.gleam
-      process.gleam
-      time.gleam
-      result.gleam
 
   generated/
     .gitkeep
@@ -415,120 +211,233 @@ boon-gleam/
     state/
 ```
 
----
-
-## 5. Required commands
-
-The command-line tool is:
-
-```text
-boongleam
-```
-
-Because Gleam normally runs through `gleam run`, support these commands:
-
-```bash
-gleam run -- help
-gleam run -- import-upstream --source ../boon --out examples/upstream
-gleam run -- manifest
-
-gleam run -- compile examples/upstream/counter
-gleam run -- codegen examples/upstream/counter
-gleam run -- verify examples/upstream/counter
-gleam run -- verify-all
-
-gleam run -- tui
-gleam run -- play examples/terminal/pong
-gleam run -- play examples/terminal/arkanoid
-
-gleam run -- serve examples/upstream/todo_mvc --store local --port 8080
-gleam run -- serve examples/upstream/todo_mvc --store postgres --port 8080
-
-gleam run -- bench examples/terminal/pong
-gleam test
-```
-
-The early product should be usable as:
-
-```bash
-gleam run -- play examples/terminal/pong
-```
-
-and:
-
-```bash
-gleam run -- serve examples/upstream/todo_mvc --store local
-```
+`build/` is generated output. Verification commands may write reports there,
+but must never mutate `fixtures/corpus_manifest.json`.
 
 ---
 
-## 6. Source-of-truth corpus
+## 4. Source Corpus Contract
 
-Import examples from the upstream Boon repository:
+Import examples from the pinned Boon corpus root. The importer must preserve
+source file contents byte-for-byte except for line ending normalization to LF.
+Do not silently import unrelated directories.
+
+The v0/v1 imported upstream examples are:
 
 ```text
-https://github.com/BoonLang/boon
+minimal
+hello_world
+counter
+counter_hold
+complex_counter
+interval
+interval_hold
+layers
+shopping_list
+todo_mvc
+cells
+cells_dynamic
 ```
 
-Initial import path:
+The later corpus expansion includes the remaining registered examples from the
+pinned upstream root, including:
 
 ```text
-playground/frontend/src/examples/
+pages
+temperature_converter
+crud
+timer
+flight_booker
+circle_drawer
+latest
+text_interpolation_update
+then
+when
+while
+list_retain_reactive
+list_map_external_dep
+list_map_block
+list_retain_count
+list_object_state
+list_retain_remove
+filter_checkbox_bug
+checkbox_test
+chained_list_remove_bug
+while_function_call
+button_hover_test
+button_hover_to_click_test
+switch_hold_test
+todo_mvc_physical
 ```
 
-Also include terminal examples from `boon-zig` or create local Boon terminal examples if they are not present upstream:
+Import rules:
 
 ```text
-examples/terminal/pong
-examples/terminal/arkanoid
+Copy each example's `.bn` files.
+Copy each example's `.expected` file.
+Copy reference images, metadata JSON, docs, helper scripts, and asset
+directories as source metadata.
+Record ignored upstream paths in the manifest with an explicit reason.
+Do not mutate source examples to make them pass.
+Do not use source file names to special-case lowering or runtime behavior.
 ```
 
-The corpus manifest is immutable source metadata:
+`fixtures/corpus_manifest.json` is immutable source metadata. It must contain:
 
-```text
-fixtures/corpus_manifest.json
+```json
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-04-27T00:00:00Z",
+  "sources": [
+    {
+      "name": "boon",
+      "repo": "https://github.com/BoonLang/boon",
+      "commit": "34251e2938a73f05de14997e167630bb0124ef48",
+      "source_root": "playground/frontend/src/examples"
+    }
+  ],
+  "examples": [
+    {
+      "name": "counter",
+      "kind": "single_file",
+      "source_repo": "boon",
+      "source_commit": "34251e2938a73f05de14997e167630bb0124ef48",
+      "source_path": "counter",
+      "local_path": "examples/upstream/counter",
+      "entry_file": "counter.bn",
+      "files": ["counter.bn", "counter.expected"],
+      "assets": [],
+      "docs": [],
+      "scripts": [],
+      "expected": "counter.expected",
+      "targets": ["semantic", "terminal", "backend"],
+      "phase": "events",
+      "ignored": false,
+      "ignored_reason": ""
+    }
+  ],
+  "ignored": [
+    {
+      "path": "hw_examples/",
+      "source_repo": "boon",
+      "source_commit": "34251e2938a73f05de14997e167630bb0124ef48",
+      "ignored": true,
+      "ignored_reason": "not part of the v0/v1 Boon reactive app corpus"
+    }
+  ]
+}
 ```
 
-Verification reports are generated separately:
+Verification reports go under:
 
 ```text
+build/reports/verify/<example>.json
 build/reports/verify-all.json
-build/reports/<example-name>.json
-```
-
-Manifest entry:
-
-```json
-{
-  "name": "counter",
-  "kind": "single_file",
-  "entry_file": "counter.bn",
-  "files": ["counter.bn"],
-  "expected": "counter.expected",
-  "targets": ["semantic", "terminal", "backend"],
-  "phase": "events"
-}
-```
-
-Terminal game entry:
-
-```json
-{
-  "name": "pong",
-  "kind": "single_file",
-  "entry_file": "pong.bn",
-  "files": ["pong.bn"],
-  "expected": "pong.expected",
-  "targets": ["terminal_canvas"],
-  "phase": "terminal_games"
-}
+build/reports/backend/<example>.json
+build/reports/durability/<example>.json
+build/reports/perf/<example>.json
 ```
 
 ---
 
-## 7. Compiler pipeline
+## 5. CLI Contract
 
-The compiler pipeline is:
+The executable command is `boongleam`. During development it is invoked through
+`gleam run -- <subcommand>`.
+
+Every command exits `0` on success and non-zero on failure. Commands that write
+reports must write the report before exiting non-zero when failure details are
+available.
+
+```text
+help
+  Print subcommands, flags, and examples.
+
+import-upstream --source PATH --out examples/upstream
+  Import pinned corpus files and write fixtures/corpus_manifest.json.
+
+manifest
+  Validate fixtures/corpus_manifest.json and print summary.
+
+compile EXAMPLE_PATH
+  Load project, lex, parse, resolve modules, lower through HIR/SourceShape.
+
+codegen EXAMPLE_PATH [--target core|terminal|backend|web]
+  Generate Gleam package output under build/generated/<example>/.
+
+verify EXAMPLE_PATH [--target semantic|terminal] [--report PATH]
+  Run .expected verification through BoonGleamRuntimeHost.
+
+verify-all [--phase PHASE] [--report build/reports/verify-all.json]
+  Run every non-ignored manifest example whose phase is <= PHASE.
+
+verify-backend EXAMPLE_PATH --store memory|local|postgres [--report PATH]
+  Start bounded backend session verification and stop all spawned processes.
+
+verify-durability EXAMPLE_PATH --store local|postgres [--report PATH]
+  Verify restart/replay/idempotency/conflict behavior.
+
+tui
+  Launch interactive terminal playground.
+
+play EXAMPLE_PATH
+  Launch direct interactive full-screen terminal mode.
+
+play-smoke EXAMPLE_PATH --ticks N --keys PATH --timeout-ms N
+  Run bounded terminal mode without human input and write a report.
+
+serve EXAMPLE_PATH --store memory|local|postgres --port N
+  Run long-lived backend server until interrupted.
+
+serve-smoke EXAMPLE_PATH --store memory|local|postgres --port N --timeout-ms N
+  Start backend, run health/session/snapshot smoke checks, stop backend.
+
+web EXAMPLE_PATH --mode durable-client|local-js
+  Build or run the Lustre/Gleam JS client for the selected target.
+
+store setup-postgres --database-url URL
+  Apply the PostgreSQL schema if missing. Must be idempotent.
+
+bench EXAMPLE_PATH --events N|--ticks N [--report PATH]
+  Run bounded local performance measurement.
+
+bench-backend EXAMPLE_PATH --events N --store local|postgres [--report PATH]
+  Run bounded backend performance measurement.
+```
+
+Required smoke commands:
+
+```bash
+gleam test
+gleam run -- help
+gleam run -- manifest
+gleam run -- verify examples/upstream/counter
+gleam run -- play-smoke examples/terminal/pong --ticks 1000 --timeout-ms 5000
+gleam run -- serve-smoke examples/upstream/counter --store memory --port 8080 --timeout-ms 5000
+```
+
+Long-running commands such as `play` and `serve` are never the only CI gate.
+Every long-running command must have a bounded smoke command.
+
+---
+
+## 6. Compiler Frontend And Syntax Matrix
+
+The compiler is implemented in Gleam. It must emit diagnostics with:
+
+```text
+code
+severity
+file path
+line
+column
+span start
+span end
+message
+help
+```
+
+Pipeline:
 
 ```text
 ProjectLoader
@@ -538,51 +447,126 @@ ProjectLoader
   -> ModuleResolver
   -> NameResolver
   -> HIR
+  -> SourceShape
   -> FlowIR
   -> TypeFacts
   -> GleamCodegen
 ```
 
-### 7.1 Frontend
-
-The frontend is implemented in Gleam.
-
-It must produce diagnostics with:
+Phase-gated syntax:
 
 ```text
-file path
-line
-column
-span start
-span end
-message
-optional help text
+Phase 1:
+  identifiers
+  integer/string/bool/text literals
+  lists
+  records
+  field access
+  named definitions
+  function calls
+  pipe calls
+  basic Document/Text/Element output needed by minimal and hello_world
+
+Phase 2:
+  helper functions
+  blocks
+  semantic snapshot roots
+  generated typed State/Event/Effect shell
+
+Phase 3:
+  HOLD
+  LINK
+  THEN
+  LATEST
+  button press
+  text input change/key_down
+  expected runner actions for counter/counter_hold/complex_counter
+
+Phase 4:
+  Terminal/canvas
+  Terminal/key_down
+  Terminal/key_up
+  Terminal/resize
+  Timer/interval
+  Canvas/rect
+  Canvas/text
+  Canvas/cell
+
+Phase 5:
+  WHEN
+  WHILE
+  PASS:
+  PASSED
+  list map/retain/count/remove
+  records in mapped scopes
+  checkbox, select, slider, hover, focus, double-click
+
+Phase 10:
+  multi-file project loading
+  BUILD.bn
+  Scene semantic snapshots
 ```
 
-Compiler diagnostics must be usable by:
+`LINK` is the canonical runnable source marker for this repo because the pinned
+Boon corpus uses `LINK`. `SOURCE` is not canonical for `boon-gleam` v0/v1. If a
+runnable source file contains `SOURCE`, fail with:
 
 ```text
-terminal TUI
-backend API
-web frontend
-verification reports
+code: unsupported_source_marker
+message: SOURCE is not accepted by boon-gleam v0/v1; use LINK for the pinned corpus
 ```
 
-### 7.2 HIR
+SourceShape is required before FlowIR. It records:
 
-HIR is syntax-directed and close to Boon.
+```text
+source slot id
+semantic path
+payload type
+source span
+binding target path
+function instance id
+mapped scope id
+list item identity input
+PASS/PASSED normalized context path
+```
 
-HIR keeps source information for diagnostics and generated-code comments.
+SourceShape diagnostics:
 
-### 7.3 FlowIR
+```text
+duplicate_link_path
+link_used_as_normal_value
+incompatible_link_binding
+dynamic_link_shape
+unsupported_source_marker
+unsupported_syntax
+module_collision
+```
 
-FlowIR is the target-independent representation used for codegen.
+Stable identity rules:
+
+```text
+Function instance identity is derived from function name, callsite span, and
+stable parent scope id.
+
+Mapped list item identity is derived from explicit item id when present. If no
+explicit id exists, use source list identity plus zero-based index and mark the
+node as index-keyed in the semantic tree.
+
+Retained semantic node id is derived from source span, semantic path, function
+instance id, mapped scope id, and item identity.
+
+Focus, hover, input value, and checkbox state must survive re-render when the
+retained semantic id is unchanged.
+
+Equal timestamp/source conflicts break by stable source order: file path, span
+start, then span end.
+```
 
 FlowIR must make these concepts explicit:
 
 ```text
 HOLD cells
-LINK ports
+LINK slots and binding operations
 timers
 router reads/writes
 persistence reads/writes
@@ -598,89 +582,62 @@ module imports
 build-file side effects
 ```
 
-The generated Gleam code must not need to understand raw Boon syntax.
+Generated Gleam code must not need raw Boon syntax.
 
 ---
 
-## 8. Generated Gleam architecture
+## 7. Generated Package Contract
 
-Generate one Gleam package per Boon project.
-
-Generated layout:
+Generate one build directory per Boon project:
 
 ```text
-build/generated/counter/
+build/generated/<example>/
   gleam.toml
-  src/
-    generated_counter.gleam
-    generated_counter/types.gleam
-    generated_counter/state.gleam
-    generated_counter/event.gleam
-    generated_counter/effect.gleam
-    generated_counter/update.gleam
-    generated_counter/view.gleam
-    generated_counter/encode.gleam
-    generated_counter/decode.gleam
-    generated_counter/terminal_target.gleam
-    generated_counter/backend_target.gleam
-    generated_counter/lustre_target.gleam
+  src/generated_<example>.gleam
+  src/generated_<example>/types.gleam
+  src/generated_<example>/state.gleam
+  src/generated_<example>/event.gleam
+  src/generated_<example>/effect.gleam
+  src/generated_<example>/update.gleam
+  src/generated_<example>/view.gleam
+  src/generated_<example>/encode.gleam
+  src/generated_<example>/decode.gleam
+  src/generated_<example>/terminal_adapter.gleam
+  src/generated_<example>/backend_adapter.gleam
+  src/generated_<example>/lustre_adapter.gleam
 ```
 
-### 8.1 Generated core functions
+Package boundaries:
 
-Every generated app exports:
+```text
+boon_gleam_runtime:
+  shared runtime package from this repo
+  contains semantic tree, terminal canvas, events/effects, diagnostics, JSON
+  codecs, verification host types
+
+generated core package:
+  imports only gleam_stdlib, gleam_json, and boon_gleam_runtime
+  exports typed State, Event, Effect, init, update, view, encode, decode
+
+BEAM adapter modules:
+  may import gleam_erlang, gleam_otp, mist, shelf, pog
+  must never be imported by JS target modules
+
+JS/Lustre adapter modules:
+  may import lustre
+  must never import gleam_erlang, gleam_otp, mist, shelf, or pog
+```
+
+Generated core functions:
 
 ```gleam
 pub fn init(context: InitContext) -> State
-
 pub fn update(state: State, event: Event) -> #(State, List(Effect))
-
 pub fn view(state: State) -> Snapshot
 ```
 
-Where:
-
-```gleam
-pub type Snapshot {
-  DocumentSnapshot(Document)
-  SceneSnapshot(Scene)
-  TerminalCanvasSnapshot(TerminalCanvas)
-  SemanticSnapshot(SemanticTree)
-}
-```
-
-### 8.2 Generated state
-
-Prefer typed generated state.
-
-Example:
-
-```gleam
-pub type State {
-  State(
-    count: Int,
-    route: String,
-    todos: List(Todo),
-  )
-}
-
-pub type Todo {
-  Todo(
-    id: Int,
-    title: String,
-    completed: Bool,
-    editing: Bool,
-  )
-}
-```
-
-Use dynamic fallback values only where the compiler cannot yet specialize.
-
-### 8.3 Generated events
-
-Generate typed events.
-
-Example:
+Generated events must be typed. Do not use a stringly map as the primary
+generated event representation.
 
 ```gleam
 pub type Event {
@@ -688,22 +645,20 @@ pub type Event {
   Click(link_id: String)
   ChangeText(link_id: String, text: String)
   KeyDown(link_id: String, key: Key)
+  KeyUp(link_id: String, key: Key)
   TimerTick(timer_id: String, now_ms: Int)
   RouteTo(path: String)
-  TerminalKey(key: Key)
+  TerminalKeyDown(key: Key)
+  TerminalKeyUp(key: Key)
   TerminalResize(width: Int, height: Int)
 }
 ```
 
-Do not make all generated events a stringly typed map.
-
-### 8.4 Generated effects
-
-Effects are target-neutral.
+Effects are target-neutral:
 
 ```gleam
 pub type Effect {
-  PersistWrite(key: String, value: String)
+  PersistWrite(key: String, value_json: String)
   PersistDeletePrefix(prefix: String)
   StartTimer(id: String, interval_ms: Int)
   StopTimer(id: String)
@@ -713,19 +668,20 @@ pub type Effect {
 }
 ```
 
-Target adapters interpret effects.
-
-The pure generated `update` function must not perform IO directly.
-
 ---
 
-## 9. Runtime snapshot model
+## 8. Runtime Snapshot And Schema Contract
 
-The shared runtime defines these snapshot types.
-
-### 9.1 Semantic tree
+All snapshots must encode to JSON matching `fixtures/snapshot_schema.json`.
 
 ```gleam
+pub type Snapshot {
+  DocumentSnapshot(Document)
+  SceneSnapshot(Scene)
+  TerminalCanvasSnapshot(TerminalCanvas)
+  SemanticSnapshot(SemanticTree)
+}
+
 pub type SemanticNode {
   SemanticNode(
     id: String,
@@ -741,12 +697,34 @@ pub type SemanticNode {
     selected: Bool,
     outline_visible: Bool,
     input_typeable: Bool,
+    source_path: String,
     children: List(SemanticNode),
   )
 }
+
+pub type TerminalCanvas {
+  TerminalCanvas(width: Int, height: Int, cells: List(TerminalCell))
+}
+
+pub type TerminalCell {
+  TerminalCell(
+    x: Int,
+    y: Int,
+    text: String,
+    fg: Colour,
+    bg: Colour,
+    bold: Bool,
+  )
+}
+
+pub type Colour {
+  Indexed(Int)
+  Rgb(red: Int, green: Int, blue: Int)
+  Default
+}
 ```
 
-Roles:
+Allowed semantic roles:
 
 ```text
 document
@@ -770,114 +748,261 @@ reference
 debug_value
 ```
 
-### 9.2 Terminal canvas
+`Scene` is semantic only. No Raybox or physical renderer is implemented here.
 
-```gleam
-pub type TerminalCanvas {
-  TerminalCanvas(
-    width: Int,
-    height: Int,
-    cells: List(TerminalCell),
-  )
-}
+Schema files are normative:
 
-pub type TerminalCell {
-  TerminalCell(
-    x: Int,
-    y: Int,
-    text: String,
-    fg: Colour,
-    bg: Colour,
-    bold: Bool,
-  )
-}
+```text
+fixtures/snapshot_schema.json:
+  Snapshot, SemanticNode, TerminalCanvas, TerminalCell, Colour, Diagnostic
+
+fixtures/protocol_schema.json:
+  WebSocket client/server messages, event JSON, snapshot JSON, errors
+
+fixtures/backend_api_schema.json:
+  HTTP requests, responses, status codes, error bodies
+
+fixtures/expected_action_schema.json:
+  .expected action names and argument types
 ```
-
-Terminal game examples render through `TerminalCanvas`.
-
-### 9.3 Document and scene
-
-Documents and scenes are semantic snapshots, not pixel renderings.
-
-```gleam
-pub type Document {
-  Document(root: SemanticNode)
-}
-
-pub type Scene {
-  Scene(
-    root: SemanticNode,
-    lights: List(LightSummary),
-    geometry: GeometrySummary,
-  )
-}
-```
-
-`Scene` exists so examples like physical TodoMVC can be represented semantically. Visual physical rendering is not part of this repo.
 
 ---
 
-## 10. Terminal TUI architecture
+## 9. BoonGleamRuntimeHost
 
-The terminal TUI is a first-class frontend.
+All verifiers, backend smoke tests, and terminal smoke tests must go through
+`BoonGleamRuntimeHost`. This facade is the public runtime/testing contract.
 
-### 10.1 Modes
+Required capabilities:
 
-Support these modes:
+```gleam
+pub type BoonGleamRuntimeHost
+
+pub fn load_project(path: String) -> Result(Project, Diagnostic)
+pub fn compile_project(project: Project) -> Result(CompiledProject, Diagnostic)
+pub fn codegen_project(compiled: CompiledProject, target: Target) -> Result(GeneratedProject, Diagnostic)
+pub fn start_session(generated: GeneratedProject, clock: TimeSource) -> Result(RuntimeSession, Diagnostic)
+pub fn dispatch(session: RuntimeSession, event: EventEnvelope) -> Result<EventResult, Diagnostic)
+pub fn advance_time(session: RuntimeSession, by_ms: Int) -> Result(RuntimeSession, Diagnostic)
+pub fn wait_until_quiescent(session: RuntimeSession, max_steps: Int) -> Result(RuntimeSession, Diagnostic)
+pub fn snapshot(session: RuntimeSession) -> Result(SnapshotEnvelope, Diagnostic)
+pub fn stop_session(session: RuntimeSession) -> Nil
+```
+
+Time sources:
+
+```gleam
+pub type TimeSource {
+  Virtual(now_ms: Int)
+  Realtime
+}
+```
+
+Verification uses `Virtual` only. Interactive `play`, `tui`, and `serve` may use
+`Realtime`. `wait` actions advance virtual time; they never sleep.
+
+Quiescence:
+
+```text
+The runtime is quiescent when no immediate generated events, due timers, or
+pending effect interpretations remain.
+
+If max_steps is exhausted, fail with diagnostic code runtime_not_quiescent.
+```
+
+---
+
+## 10. Expected Runner Contract
+
+Parse upstream `.expected` files as TOML. Do not invent a new format.
+
+Supported sections and fields:
+
+```text
+[test]
+category
+description
+only_engines
+skip_engines
+
+[output]
+text
+match
+
+[timing]
+timeout
+initial_delay
+poll_interval
+
+[[sequence]]
+description
+actions
+expect
+expect_match
+
+[[persistence]]
+description
+actions
+expect
+expect_match
+```
+
+`skip_engines` is informational unless it explicitly names `boon-gleam`.
+Unsupported actions fail during expected parsing, not halfway through a run.
+
+Action names:
+
+```text
+assert_button_disabled
+assert_button_enabled
+assert_button_has_outline
+assert_cells_cell_text
+assert_cells_row_visible
+assert_checkbox_checked
+assert_checkbox_count
+assert_checkbox_unchecked
+assert_contains
+assert_focused
+assert_focused_input_value
+assert_input_empty
+assert_input_not_typeable
+assert_input_placeholder
+assert_input_typeable
+assert_input_value
+assert_not_contains
+assert_not_focused
+assert_toggle_all_darker
+assert_url
+
+clear_states
+click_button
+click_button_near_text
+click_checkbox
+click_checkbox_near_text
+click_text
+dblclick_cells_cell
+dblclick_text
+dblclick_text_nth
+focus_input
+hover_text
+key
+run
+select_option
+set_focused_input_value
+set_input_value
+set_slider_value
+type
+wait
+```
+
+Action semantics:
+
+```text
+Text matching uses visible SemanticTree text, not source text.
+Index-based controls use zero-based indexes.
+Cells row/column actions use the corpus convention: one-based row/column.
+set_* actions replace the control value and emit the corresponding change event.
+type appends text to the focused input and emits deterministic change events.
+key emits key_down with the current focused input value when applicable.
+wait advances virtual time by the requested duration.
+run starts or restarts through BoonGleamRuntimeHost.
+clear_states clears runtime, memory store, local store for the selected example,
+and terminal verifier state.
+```
+
+Unknown action diagnostics must include:
+
+```text
+example name
+expected file path
+line/span
+unknown action name
+original TOML action row
+fixtures/expected_action_schema.json path
+```
+
+Verification report shape:
+
+```json
+{
+  "schema_version": 1,
+  "command": "verify",
+  "example": "counter",
+  "target": "semantic",
+  "status": "pass",
+  "started_at_utc": "2026-04-27T00:00:00Z",
+  "duration_ms": 12,
+  "source_commit": "34251e2938a73f05de14997e167630bb0124ef48",
+  "actions_total": 3,
+  "actions_passed": 3,
+  "snapshot_hash": "sha256:...",
+  "terminal_frame_hash": null,
+  "diagnostics": [],
+  "failure": null,
+  "reproduce": "gleam run -- verify examples/upstream/counter"
+}
+```
+
+Failure reports set `status` to `fail` and include:
+
+```json
+{
+  "example": "todo_mvc",
+  "sequence_index": 1,
+  "action_index": 4,
+  "action": ["click_button_near_text", "Buy milk"],
+  "expected": "Buy milk",
+  "actual": "visible semantic tree text...",
+  "semantic_tree_dump": "...",
+  "terminal_frame_dump": null,
+  "diagnostics": []
+}
+```
+
+---
+
+## 11. Terminal TUI And Games
+
+Terminal builtins are defined in `fixtures/terminal_builtin_mapping.json` before
+Phase 4 implementation starts.
+
+Required v0 terminal builtins:
+
+```text
+Terminal/key_down -> Event.TerminalKeyDown
+Terminal/key_up -> Event.TerminalKeyUp
+Terminal/resize -> Event.TerminalResize
+Terminal/canvas -> TerminalCanvasSnapshot
+Canvas/rect -> TerminalCanvas cells
+Canvas/text -> TerminalCanvas cells
+Canvas/cell -> TerminalCanvas cell
+Timer/interval -> Effect.StartTimer
+```
+
+Headless terminal defaults:
+
+```text
+viewport: 80 columns x 24 rows
+tick cadence: 16 ms
+initial virtual time: 0 ms
+random seed: 0
+final hash input: viewport, sorted cells, app state JSON, revision, virtual time
+```
+
+Modes:
 
 ```text
 boongleam tui
-  full playground interface with sidebar, source, preview, logs
+  full playground with examples, source/IR, preview, logs, diagnostics
 
 boongleam play examples/terminal/pong
-  direct full-screen game mode
+  full-screen direct play mode
 
-boongleam play examples/terminal/arkanoid
-  direct full-screen game mode
+boongleam play-smoke examples/terminal/pong --ticks 1000 --timeout-ms 5000
+  bounded CI-safe smoke mode
 ```
 
-### 10.2 Full playground layout
-
-The full TUI playground has panes:
-
-```text
-┌──────────────────────────────────────────────────────────┐
-│ boon-gleam | example: counter | target: terminal/backend │
-├───────────────┬─────────────────────────┬────────────────┤
-│ Examples      │ Source / Generated IR   │ Preview        │
-│               │                         │                │
-│ minimal       │ counter.bn              │ semantic tree  │
-│ counter       │                         │ or canvas      │
-│ pong          │                         │                │
-│ arkanoid      │                         │                │
-├───────────────┴─────────────────────────┴────────────────┤
-│ log / diagnostics / metrics                               │
-└──────────────────────────────────────────────────────────┘
-```
-
-Keyboard shortcuts:
-
-```text
-q          quit
-r          run/reload
-b          build/codegen
-e          run expected
-p          play preview if terminal canvas
-tab        switch panes
-enter      activate selected item
-f          focus filter/search
-?          help
-```
-
-### 10.3 Direct play mode
-
-Direct play mode hides compiler UI and runs the generated app:
-
-```bash
-gleam run -- play examples/terminal/pong
-```
-
-Requirements:
+Direct play requirements:
 
 ```text
 full-screen terminal
@@ -885,64 +1010,68 @@ raw/cbreak key input through Etch
 frame timer
 ANSI diff rendering
 terminal restored on exit
-headless mode for verification
+q exits
+bounded headless mode for CI
 ```
 
-### 10.4 Terminal game event loop
-
-For Pong/Arkanoid:
+Pong v0 acceptance:
 
 ```text
-keyboard event
-  -> Event.TerminalKey
-timer tick
-  -> Event.TimerTick
-resize
-  -> Event.TerminalResize
-
-state + event
-  -> generated update
-  -> new state + effects
-  -> generated view
-  -> TerminalCanvas
-  -> Etch renderer
+initial frame contains two paddles, ball, and score
+up/down keys move player paddle
+tick advances ball
+ball bounces from walls
+forced miss changes score
+1000 ticks produces deterministic final hash
+manual quit restores terminal
 ```
 
-Do not use an actor per ball/brick/paddle. Use one app session actor or process state machine.
+Arkanoid is v1, not v0:
+
+```text
+initial frame contains bricks, paddle, ball, and score
+left/right keys move paddle
+tick advances ball
+brick collision removes brick
+score increases
+1000 ticks produces deterministic final hash
+manual quit restores terminal
+```
+
+Terminal playground verification:
+
+```text
+play-smoke proves bounded game behavior.
+tui-smoke, when added, must select every tab/pane and run at least one
+meaningful action per milestone example.
+Manual tmux/PTTY proof is required before claiming the interactive TUI is ready
+for user handoff.
+```
 
 ---
 
-## 11. Distributed durable backend architecture
+## 12. Backend Session And Durability
 
-The backend target runs on BEAM.
+Backend target runs on BEAM with one session actor per app session.
 
-### 11.1 Supervision tree
-
-Use this supervision shape:
+Supervision shape:
 
 ```text
 BoonGleamAppSupervisor
-  ├─ StoreSupervisor
-  │   ├─ EventLogStore
-  │   └─ SnapshotStore
-  ├─ SessionRegistry
-  ├─ SessionSupervisor
-  │   ├─ SessionActor(project_id, session_id)
-  │   ├─ SessionActor(project_id, session_id)
-  │   └─ ...
-  ├─ ClientSupervisor
-  │   ├─ WebSocketClientActor
-  │   └─ ...
-  ├─ TimerSupervisor
-  │   └─ TimerActor
-  └─ WebServer
+  StoreSupervisor
+    EventLogStore
+    SnapshotStore
+  SessionRegistry
+  SessionSupervisor
+    SessionActor(project_id, session_id)
+  ClientSupervisor
+    WebSocketClientActor
+  TimerSupervisor
+    TimerActor
+  WebServer
 ```
 
-### 11.2 Session actor
-
-Each app session has a single actor.
-
-State:
+Session state:
 
 ```text
 project_id
@@ -957,86 +1086,58 @@ store handle
 metrics
 ```
 
-Messages:
+Use `ProjectSessionId` everywhere:
 
 ```gleam
-pub type SessionMessage {
-  ApplyEvent(event_id: String, event: Event, reply_to: Subject(SessionReply))
-  GetSnapshot(reply_to: Subject(SessionReply))
-  Subscribe(client: Subject(ServerToClient))
-  Unsubscribe(client_id: String)
-  TimerDue(timer_id: String, now_ms: Int)
-  Restore(reply_to: Subject(SessionReply))
-  Stop
+pub type ProjectSessionId {
+  ProjectSessionId(project_id: String, session_id: String)
 }
 ```
 
-### 11.3 Event-sourced durability
-
-Use event sourcing.
-
-For each accepted UI/runtime event:
-
-```text
-1. Receive event with unique event_id and expected revision.
-2. Validate expected revision or reject/conflict.
-3. Append event to durable event log.
-4. Apply generated update(state, event).
-5. Interpret effects.
-6. Save snapshot if snapshot interval is reached.
-7. Increment revision.
-8. Broadcast snapshot to subscribers.
-```
-
-Crash recovery:
-
-```text
-1. Load latest snapshot.
-2. Load events after snapshot revision.
-3. Replay events through generated update.
-4. Restore timers/routes.
-5. Resume session actor.
-```
-
-Idempotency:
-
-```text
-event_id must be unique per session.
-duplicate event_id returns previous result or duplicate diagnostic.
-```
-
-### 11.4 Stores
-
-Define a store behavior/interface:
+Store API:
 
 ```gleam
 pub type Store {
   Store(
-    append_event: fn(SessionId, StoredEvent) -> Result(Nil, StoreError),
-    load_events_after: fn(SessionId, Int) -> Result(List(StoredEvent), StoreError),
-    save_snapshot: fn(SessionId, StoredSnapshot) -> Result(Nil, StoreError),
-    load_latest_snapshot: fn(SessionId) -> Result(Option(StoredSnapshot), StoreError),
-    mark_event_result: fn(SessionId, String, EventResult) -> Result(Nil, StoreError),
+    append_if_revision: fn(ProjectSessionId, expected_revision: Int, StoredEvent) -> Result(AppendedEvent, StoreError),
+    load_events_after: fn(ProjectSessionId, revision: Int) -> Result(List(StoredEvent), StoreError),
+    load_event_result: fn(ProjectSessionId, event_id: String) -> Result(Option(EventResult), StoreError),
+    save_event_result: fn(ProjectSessionId, event_id: String, result: EventResult) -> Result(Nil, StoreError),
+    save_snapshot_tx: fn(ProjectSessionId, StoredSnapshot) -> Result(Nil, StoreError),
+    load_latest_snapshot: fn(ProjectSessionId) -> Result(Option(StoredSnapshot), StoreError),
+    clear_session: fn(ProjectSessionId) -> Result(Nil, StoreError),
   )
 }
 ```
 
-Implementations:
+Event acceptance transaction:
 
 ```text
-store_memory:
-  tests only
-
-store_local:
-  DETS/ETS-backed local dev store
-
-store_postgres:
-  production durable store through pog
+1. Receive event_id, expected_revision, and event.
+2. If event_id already has a stored result, return that result unchanged.
+3. Check expected_revision against session current revision.
+4. Allocate accepted_revision = current_revision + 1.
+5. Append event with accepted_revision.
+6. Apply generated update(state, event).
+7. Interpret target effects.
+8. Persist EventResult for event_id.
+9. Update current_revision to accepted_revision.
+10. Save snapshot when snapshot policy says so.
+11. Broadcast snapshot to subscribers.
 ```
 
-### 11.5 PostgreSQL schema
+Effect failure:
 
-Initial schema:
+```text
+If effect interpretation fails before current_revision update, reject the event
+with event_reject and do not broadcast a new snapshot.
+
+If persistence fails after event append, stop the session actor with an explicit
+store_error diagnostic. Recovery must replay the appended event or return the
+stored event result; it must not silently lose the event.
+```
+
+PostgreSQL schema:
 
 ```sql
 create table boon_sessions (
@@ -1059,6 +1160,16 @@ create table boon_events (
   unique (project_id, session_id, event_id)
 );
 
+create table boon_event_results (
+  project_id text not null,
+  session_id text not null,
+  event_id text not null,
+  revision bigint not null,
+  result_json jsonb not null,
+  created_at timestamptz not null,
+  primary key (project_id, session_id, event_id)
+);
+
 create table boon_snapshots (
   project_id text not null,
   session_id text not null,
@@ -1071,27 +1182,47 @@ create table boon_snapshots (
 
 ---
 
-## 12. HTTP and WebSocket API
+## 13. HTTP And WebSocket API
 
-Use JSON protocols first.
+All HTTP request/response bodies are defined in
+`fixtures/backend_api_schema.json`. All WebSocket messages are defined in
+`fixtures/protocol_schema.json`.
 
-### 12.1 HTTP endpoints
+HTTP endpoints:
 
 ```text
 GET  /health
+  200 {"status":"ok"}
+
 GET  /projects
+  200 {"projects":[{"project_id":"counter","entry":"counter.bn"}]}
+
 POST /projects
-GET  /projects/:project_id
+  body {"project_id":"counter","source_path":"examples/upstream/counter"}
+  201 {"project_id":"counter"}
+
+GET /projects/:project_id
+  200 {"project_id":"counter","compiled":true,"diagnostics":[]}
+  404 {"error":{"code":"project_not_found","message":"..."}}
+
 POST /projects/:project_id/compile
+  200 {"project_id":"counter","diagnostics":[]}
+
 POST /projects/:project_id/sessions
-GET  /projects/:project_id/sessions/:session_id/snapshot
-GET  /projects/:project_id/sessions/:session_id/events
+  body {"session_id":"optional-client-id"}
+  201 {"project_id":"counter","session_id":"...","revision":0}
+
+GET /projects/:project_id/sessions/:session_id/snapshot
+  200 {"revision":N,"snapshot":{...}}
+
+GET /projects/:project_id/sessions/:session_id/events
+  200 {"events":[...]}
+
 POST /projects/:project_id/sessions/:session_id/clear
+  200 {"cleared":true}
 ```
 
-### 12.2 WebSocket protocol
-
-Path:
+WebSocket path:
 
 ```text
 /ws/projects/:project_id/sessions/:session_id
@@ -1109,660 +1240,52 @@ Client to server:
 Server to client:
 
 ```json
-{"type":"snapshot","revision":13,"snapshot":{...}}
+{"type":"snapshot","revision":13,"snapshot":{}}
 {"type":"event_ack","event_id":"uuid","revision":13}
-{"type":"event_reject","event_id":"uuid","reason":"revision_conflict"}
-{"type":"diagnostic","diagnostic":{...}}
+{"type":"event_reject","event_id":"uuid","reason":"revision_conflict","current_revision":13}
+{"type":"diagnostic","diagnostic":{}}
 {"type":"pong"}
 ```
 
-Rules:
+Ordering:
 
 ```text
-One session actor is the source of truth.
-All clients for a session receive snapshots after accepted events.
-The server never trusts client-side state.
-The server may reject stale expected_revision.
+For an accepted event, send event_ack before or in the same mailbox turn as the
+resulting snapshot. All subscribed clients receive the same revision snapshot.
+The server never trusts client-side state. Stale expected_revision is rejected.
 ```
 
 ---
 
-## 13. Web frontend architecture
+## 14. Web Frontend Target
 
-The web frontend target uses Gleam JavaScript + Lustre.
+The web frontend uses Gleam JavaScript + Lustre.
 
-### 13.1 Two modes
-
-Support two web modes eventually.
-
-#### Local JS mode
+Two modes are allowed:
 
 ```text
-Generated Gleam JS runs update/view locally.
-No durable backend.
-Useful for demos and simple examples.
+durable-client:
+  Lustre frontend connects to BEAM backend WebSocket.
+  Backend session actor is authoritative.
+  Frontend sends events and renders snapshots.
+
+local-js:
+  Generated Gleam JS runs update/view locally.
+  No durable backend.
+  Demo-only until a later plan makes it a milestone.
 ```
 
-#### Durable client mode
+Durable client mode is the priority. JS/Lustre modules must never import
+BEAM-only modules.
 
-```text
-Lustre frontend connects to BEAM backend WebSocket.
-Backend session actor is authoritative.
-Frontend sends events and renders snapshots.
-```
-
-The durable client mode is more important.
-
-### 13.2 Shared generated code
-
-Shared target-neutral generated modules:
-
-```text
-types.gleam
-event.gleam
-snapshot.gleam
-encode.gleam
-decode.gleam
-view_model.gleam
-```
-
-BEAM-only modules must not be imported by JS target.
-
-Backend-only modules:
-
-```text
-backend_target.gleam
-session_actor.gleam
-store adapters
-```
-
-Frontend-only modules:
-
-```text
-lustre_target.gleam
-lustre_view.gleam
-websocket_client.gleam
-```
+Acceptance for web milestones must include a bounded command. A long-lived
+browser window alone is not a pass.
 
 ---
 
-## 14. Terminal/backend/frontend target split
+## 15. BUILD.bn And Multi-File Projects
 
-The generated app has target adapters.
-
-```text
-generated core:
-  State
-  Event
-  Effect
-  update
-  view
-  encode/decode
-
-terminal adapter:
-  terminal event loop
-  keyboard mapping
-  terminal canvas renderer
-  local persistence
-
-backend adapter:
-  session actor
-  durable event log
-  timers
-  websocket protocol
-
-web adapter:
-  Lustre model/update/view
-  websocket client
-```
-
-No target adapter may modify Boon semantics.
-
-All targets call the same generated `update` and `view`.
-
----
-
-## 15. Expected runner
-
-Parse upstream `.expected` files.
-
-Generate:
-
-```text
-fixtures/expected_action_schema.json
-```
-
-If an unknown expected action appears, fail with:
-
-```text
-example name
-line number
-unknown action name
-original line
-```
-
-Initial actions:
-
-```text
-assert_contains
-assert_not_contains
-assert_focused
-assert_input_typeable
-assert_input_empty
-assert_input_placeholder
-assert_checkbox_count
-assert_checkbox_checked
-assert_checkbox_unchecked
-assert_button_has_outline
-
-click_button
-click_text
-click_checkbox
-click_button_near_text
-dblclick_text
-hover_text
-focus_input
-type
-key
-wait
-run
-clear_states
-```
-
-Target-specific expected runners:
-
-```text
-semantic runner:
-  queries SemanticTree directly
-
-terminal runner:
-  queries TerminalCanvas and SemanticTree
-
-backend runner:
-  sends WebSocket events and queries snapshots
-
-web runner:
-  optional; uses browser automation later
-```
-
-No OCR. No screenshots required for `boon-gleam`.
-
----
-
-## 16. Verification plan
-
-### 16.1 Unit tests
-
-```text
-lexer tests
-parser tests
-module resolver tests
-name mangling tests
-HIR lowering tests
-FlowIR tests
-codegen golden tests
-runtime update tests
-JSON protocol tests
-store tests
-terminal canvas diff tests
-```
-
-Command:
-
-```bash
-gleam test
-```
-
-### 16.2 Static example verification
-
-Examples:
-
-```text
-minimal
-hello_world
-layers
-```
-
-Required:
-
-```text
-compile
-codegen
-semantic snapshot
-assert_contains
-```
-
-### 16.3 Event/state verification
-
-Examples:
-
-```text
-counter
-counter_hold
-complex_counter
-shopping_list
-todo_mvc
-```
-
-Required:
-
-```text
-HOLD state
-LINK events
-input
-checkbox
-focus
-hover
-double click
-persistence
-```
-
-### 16.4 Terminal game verification
-
-Examples:
-
-```text
-pong
-arkanoid
-```
-
-Use headless terminal canvas verification.
-
-For Pong:
-
-```text
-initial frame contains paddles, ball, score
-press up/down moves player paddle
-tick advances ball
-ball bounces from walls
-score changes after miss
-1000 ticks completes without crash
-headless frame hash is deterministic
-```
-
-For Arkanoid:
-
-```text
-initial frame contains paddle, ball, bricks
-left/right keys move paddle
-tick advances ball
-ball bounces
-brick collision removes brick
-score increases
-level can be completed or remains stable
-1000 ticks completes without crash
-headless frame hash is deterministic
-```
-
-### 16.5 Backend durability verification
-
-Required tests:
-
-```text
-session can be created
-event append creates revision 1
-snapshot can be fetched
-session actor restart recovers from event log
-duplicate event_id is idempotent or rejected deterministically
-stale expected_revision is rejected
-two clients receive same snapshot after event
-clear session deletes local durable state
-Postgres backend passes same tests as local store
-```
-
-### 16.6 WebSocket verification
-
-Required tests:
-
-```text
-connect websocket
-subscribe
-send click event
-receive event_ack
-receive snapshot
-disconnect
-reconnect
-receive latest snapshot
-```
-
-### 16.7 Distributed verification
-
-Start with single-node verification.
-
-Later distributed tests:
-
-```text
-two BEAM nodes
-session registry can locate session
-client connects to one node and session actor lives on another
-events route to owning session actor
-node failure produces explicit diagnostic or supervised recovery
-```
-
-Distributed tests are not part of v0.
-
----
-
-## 17. Performance plan
-
-Measure these from day one:
-
-```text
-parse_ms
-lower_ms
-codegen_ms
-generated source size
-BEAM app startup_ms
-terminal frame render_ms
-terminal frame diff cell count
-events_per_second for generated update
-session actor event latency
-backend websocket roundtrip_ms
-event log append_ms
-snapshot save_ms
-snapshot replay_ms
-memory usage where available
-```
-
-Benchmark commands:
-
-```bash
-gleam run -- bench examples/upstream/counter --events 100000
-gleam run -- bench examples/terminal/pong --ticks 10000
-gleam run -- bench-backend examples/upstream/todo_mvc --events 10000 --store local
-gleam run -- bench-backend examples/upstream/todo_mvc --events 10000 --store postgres
-```
-
-Performance reports:
-
-```text
-build/reports/perf/<example>.json
-```
-
-Do not claim C/Zig/Pony-level native speed. The goal is:
-
-```text
-interactive terminal performance
-stable server latency
-durable replay performance
-large-session reliability
-```
-
----
-
-## 18. Implementation phases
-
-### Phase 0 — Project skeleton
-
-Deliver:
-
-```text
-gleam.toml
-basic CLI
-README
-AGENTS.md
-empty module structure
-gleam test passes
-```
-
-Acceptance:
-
-```bash
-gleam test
-gleam run -- help
-```
-
-### Phase 1 — Boon frontend minimum
-
-Deliver:
-
-```text
-lexer
-parser
-AST
-diagnostics
-minimal project loader
-```
-
-Examples:
-
-```text
-minimal
-hello_world
-```
-
-Acceptance:
-
-```bash
-gleam run -- compile examples/upstream/minimal
-gleam run -- compile examples/upstream/hello_world
-```
-
-### Phase 2 — HIR/FlowIR and core codegen
-
-Deliver:
-
-```text
-HIR
-FlowIR
-generated Gleam core modules
-State/Event/Effect
-update/view
-semantic snapshot
-```
-
-Examples:
-
-```text
-minimal
-hello_world
-counter initial view
-```
-
-Acceptance:
-
-```bash
-gleam run -- verify examples/upstream/minimal
-gleam run -- verify examples/upstream/hello_world
-```
-
-### Phase 3 — Events and HOLD state
-
-Deliver:
-
-```text
-HOLD cells
-LINK ports
-button events
-generated typed AppState
-semantic tree queries
-expected runner
-```
-
-Examples:
-
-```text
-counter
-counter_hold
-complex_counter
-```
-
-Acceptance:
-
-```bash
-gleam run -- verify examples/upstream/counter
-gleam run -- verify examples/upstream/counter_hold
-```
-
-### Phase 4 — Real terminal TUI
-
-Deliver:
-
-```text
-Etch terminal backend
-full-screen playground shell
-direct play mode
-terminal canvas snapshot
-keyboard input
-frame timer
-ANSI diff renderer
-```
-
-Examples:
-
-```text
-pong
-arkanoid
-```
-
-Acceptance:
-
-```bash
-gleam run -- play examples/terminal/pong
-gleam run -- verify examples/terminal/pong
-gleam run -- play examples/terminal/arkanoid
-gleam run -- verify examples/terminal/arkanoid
-```
-
-### Phase 5 — Forms/lists/TodoMVC semantic support
-
-Deliver:
-
-```text
-text input
-checkbox
-select
-slider
-focus
-hover
-double click
-lists
-records
-persistence effects
-```
-
-Examples:
-
-```text
-shopping_list
-todo_mvc
-temperature_converter
-crud
-```
-
-Acceptance:
-
-```bash
-gleam run -- verify examples/upstream/shopping_list
-gleam run -- verify examples/upstream/todo_mvc
-```
-
-### Phase 6 — Backend session actor
-
-Deliver:
-
-```text
-Mist server
-session actor
-in-memory store
-WebSocket protocol
-event dispatch
-snapshot broadcast
-```
-
-Acceptance:
-
-```bash
-gleam run -- serve examples/upstream/counter --store memory --port 8080
-gleam run -- verify-backend examples/upstream/counter --store memory
-```
-
-### Phase 7 — Local durable store
-
-Deliver:
-
-```text
-DETS/ETS local store
-event log
-snapshots
-session recovery
-duplicate event handling
-```
-
-Acceptance:
-
-```bash
-gleam run -- verify-backend examples/upstream/todo_mvc --store local
-gleam run -- verify-durability examples/upstream/todo_mvc --store local
-```
-
-### Phase 8 — PostgreSQL durable store
-
-Deliver:
-
-```text
-pog-based Postgres store
-schema migrations or setup command
-event log transactions
-snapshot storage
-replay tests
-```
-
-Acceptance:
-
-```bash
-gleam run -- store setup-postgres
-gleam run -- verify-backend examples/upstream/todo_mvc --store postgres
-gleam run -- verify-durability examples/upstream/todo_mvc --store postgres
-```
-
-### Phase 9 — Lustre web frontend
-
-Deliver:
-
-```text
-generated Lustre target
-websocket client
-snapshot rendering
-event sending
-counter/todo_mvc web client
-```
-
-Acceptance:
-
-```bash
-gleam run -- web examples/upstream/counter
-gleam run -- serve examples/upstream/counter --store local
-```
-
-The backend remains authoritative in durable client mode.
-
-### Phase 10 — Multi-file and physical semantic support
-
-Deliver:
-
-```text
-multi-file project loader
-BUILD.bn support if needed
-Scene semantic tree
-physical TodoMVC semantic verification
-theme/mode interactions
-```
-
-Acceptance:
-
-```bash
-gleam run -- verify examples/upstream/todo_mvc_physical
-gleam run -- verify-backend examples/upstream/todo_mvc_physical --store local
-```
-
-No visual physical renderer is required.
-
----
-
-## 19. Multi-file and BUILD.bn support
-
-All examples are projects.
+All examples are projects:
 
 ```gleam
 pub type Project {
@@ -1790,13 +1313,26 @@ Entry file is not imported as a normal module.
 BUILD.bn is a build script, not an app module.
 Every other .bn file is importable.
 Module name is basename without .bn.
-Module names must be unique.
+Module names must be unique within a project.
 Relative paths are preserved.
 ```
 
-If a project has `BUILD.bn`, run it before compiling the entry file.
+Phase 10 requires `BUILD.bn`; it is not conditional.
 
-Required build-host builtins for physical TodoMVC:
+VFS rules:
+
+```text
+Each project has a sandboxed virtual root.
+BUILD.bn can read only files in that project root.
+BUILD.bn can write only generated files under that project root.
+Directory entries are sorted bytewise by normalized relative path.
+Writes are staged and committed only if BUILD.bn ends with Build/succeed().
+Build/fail(message) discards staged writes and fails compilation.
+FLUSH commits current staged writes and continues.
+FLUSHED reports the last committed generated file set.
+```
+
+Required build-host builtins:
 
 ```text
 Directory/entries(path)
@@ -1816,264 +1352,337 @@ FLUSH
 FLUSHED
 ```
 
-Build output is written to the project virtual filesystem.
+BUILD report fields:
+
+```text
+project
+build_file
+inputs
+generated_files
+diagnostics
+status
+```
 
 ---
 
-## 20. Terminal games: Pong and Arkanoid
+## 16. Performance And Metrics
 
-Pong and Arkanoid are important because they force the implementation to support:
+Correctness reports and performance reports are separate. Correctness must pass
+before any performance pass is meaningful.
 
-```text
-real keyboard input
-timer ticks
-stateful updates
-terminal canvas rendering
-fast redraw
-headless verification
-manual play
-benchmarking
-```
-
-### 20.1 Boon terminal primitives
-
-Support these Boon concepts:
+Measure:
 
 ```text
-Terminal/key_down
-Terminal/key_up
-Terminal/resize
-Terminal/canvas
-Canvas/rect
-Canvas/text
-Canvas/cell
-Timer/interval
+parse_ms
+lower_ms
+source_shape_ms
+flow_ir_ms
+codegen_ms
+generated_source_size
+BEAM app startup_ms
+terminal frame render_ms
+terminal frame diff cell count
+events_per_second for generated update
+session actor event latency
+backend websocket roundtrip_ms
+event log append_ms
+snapshot save_ms
+snapshot replay_ms
+memory usage where available
 ```
 
-Exact names may follow the current Boon/Boon-Zig convention. If names differ, document them in:
+Initial budgets are warning thresholds, not hard release gates, until v1:
 
 ```text
-fixtures/terminal_builtin_mapping.json
+counter verify: p95 event latency <= 25 ms
+todo_mvc semantic verify: p95 event latency <= 50 ms
+pong terminal frame render: p95 <= 16 ms for 80x24
+backend counter memory-store roundtrip: p95 <= 50 ms
+local replay 1000 events: <= 1000 ms
 ```
 
-### 20.2 Pong acceptance
+Performance reports go under `build/reports/perf/` and include command,
+example, target, samples, p50, p95, max, and environment summary.
 
-Manual:
+---
+
+## 17. Implementation Phases
+
+### Phase 0 - Toolchain And Skeleton
+
+Deliver:
+
+```text
+Gleam and Erlang/OTP preflight documented
+gleam.toml with pinned dependencies
+basic CLI
+README
+module skeleton needed by Phase 1 only
+```
+
+Acceptance:
+
+```bash
+gleam --version
+erl -eval 'erlang:display(erlang:system_info(otp_release)), halt().' -noshell
+gleam test
+gleam run -- help
+```
+
+### Phase 1 - Boon Frontend Minimum
+
+Deliver:
+
+```text
+lexer
+parser
+AST
+diagnostics
+minimal project loader
+Phase 1 syntax matrix support
+```
+
+Acceptance:
+
+```bash
+gleam run -- compile examples/upstream/minimal
+gleam run -- compile examples/upstream/hello_world
+```
+
+### Phase 2 - HIR, SourceShape, FlowIR, Core Codegen
+
+Deliver:
+
+```text
+HIR
+SourceShape
+FlowIR
+generated Gleam core modules
+typed State/Event/Effect
+semantic snapshot runtime
+```
+
+Acceptance:
+
+```bash
+gleam run -- verify examples/upstream/minimal
+gleam run -- verify examples/upstream/hello_world
+```
+
+### Phase 3 - Events And HOLD State
+
+Deliver:
+
+```text
+HOLD cells
+LINK slots and bindings
+THEN
+LATEST
+button/input events
+BoonGleamRuntimeHost
+expected runner core actions
+semantic tree queries
+```
+
+Acceptance:
+
+```bash
+gleam run -- verify examples/upstream/counter
+gleam run -- verify examples/upstream/counter_hold
+gleam run -- verify examples/upstream/complex_counter
+```
+
+### Phase 4 - Pong Terminal V0
+
+Deliver:
+
+```text
+Etch terminal backend
+direct play mode
+play-smoke mode
+terminal canvas snapshot
+keyboard input
+virtual frame timer
+ANSI diff renderer
+Pong
+```
+
+Acceptance:
+
+```bash
+gleam run -- play-smoke examples/terminal/pong --ticks 1000 --timeout-ms 5000
+gleam run -- verify examples/terminal/pong --target terminal
+```
+
+Manual handoff proof before claiming interactive readiness:
 
 ```bash
 gleam run -- play examples/terminal/pong
 ```
 
-Required behavior:
+### Phase 5 - Forms, Lists, TodoMVC Semantics
+
+Deliver:
 
 ```text
-paddle responds to keyboard
-ball moves at timer tick rate
-ball bounces
-score updates
-quit key exits and restores terminal
+WHEN/WHILE
+PASS/PASSED
+text input
+checkbox
+select
+slider
+focus
+hover
+double click
+lists and records
+persistence effects
+stable identity rules
 ```
 
-Headless verification:
+Acceptance:
 
 ```bash
-gleam run -- verify examples/terminal/pong
+gleam run -- verify examples/upstream/shopping_list
+gleam run -- verify examples/upstream/todo_mvc
 ```
 
-Required assertions:
+### Phase 6 - Backend Session Actor
+
+Deliver:
 
 ```text
-initial canvas has two paddles and a ball
-after 10 ticks, ball position changed
-after player movement key, paddle position changed
-after forced miss, score changes
-1000 ticks produces deterministic final hash
+Mist server
+session actor
+in-memory store
+WebSocket protocol
+event dispatch
+snapshot broadcast
+serve-smoke
 ```
 
-### 20.3 Arkanoid acceptance
-
-Manual:
+Acceptance:
 
 ```bash
-gleam run -- play examples/terminal/arkanoid
+gleam run -- serve-smoke examples/upstream/counter --store memory --port 8080 --timeout-ms 5000
+gleam run -- verify-backend examples/upstream/counter --store memory
 ```
 
-Required behavior:
+### Phase 7 - Local Durable Store
+
+Deliver:
 
 ```text
-paddle responds to keyboard
-ball moves
-bricks render
-brick collision removes brick
-score updates
-quit key exits and restores terminal
+Shelf local store
+event log
+snapshots
+session recovery
+duplicate event handling
+stale revision rejection
 ```
 
-Headless verification:
+Acceptance:
 
 ```bash
-gleam run -- verify examples/terminal/arkanoid
+gleam run -- verify-backend examples/upstream/todo_mvc --store local
+gleam run -- verify-durability examples/upstream/todo_mvc --store local
 ```
 
-Required assertions:
+### Phase 8 - Arkanoid And Game Complexity
+
+Deliver:
 
 ```text
-initial canvas has bricks, paddle, ball
-after movement key, paddle position changed
-after tick sequence, ball position changed
-brick collision removes at least one brick
-score increases
-1000 ticks produces deterministic final hash
+Arkanoid terminal example
+brick collision
+score
+deterministic terminal hash
+bounded smoke verification
+```
+
+Acceptance:
+
+```bash
+gleam run -- play-smoke examples/terminal/arkanoid --ticks 1000 --timeout-ms 5000
+gleam run -- verify examples/terminal/arkanoid --target terminal
+```
+
+### Phase 9 - PostgreSQL Durable Store
+
+Deliver:
+
+```text
+pog-based Postgres store
+idempotent schema setup
+event log transactions
+snapshot storage
+replay tests
+```
+
+Acceptance:
+
+```bash
+gleam run -- store setup-postgres --database-url "$DATABASE_URL"
+gleam run -- verify-backend examples/upstream/todo_mvc --store postgres
+gleam run -- verify-durability examples/upstream/todo_mvc --store postgres
+```
+
+### Phase 10 - Lustre Durable Client
+
+Deliver:
+
+```text
+generated Lustre target
+websocket client
+snapshot rendering
+event sending
+counter durable client
+todo_mvc durable client
+```
+
+Acceptance:
+
+```bash
+gleam run -- web examples/upstream/counter --mode durable-client
+gleam run -- serve-smoke examples/upstream/counter --store local --port 8080 --timeout-ms 5000
+```
+
+### Phase 11 - Multi-File And BUILD.bn
+
+Deliver:
+
+```text
+multi-file project loader
+BUILD.bn execution
+VFS sandbox
+generated-file manifest
+Scene semantic tree
+todo_mvc_physical semantic verification
+```
+
+Acceptance:
+
+```bash
+gleam run -- verify examples/upstream/todo_mvc_physical
+gleam run -- verify-backend examples/upstream/todo_mvc_physical --store local
 ```
 
 ---
 
-## 21. Durable backend scenarios
+## 18. Definitions Of Done
 
-### 21.1 Counter
+Any false item means the milestone is incomplete.
 
-Scenario:
-
-```text
-start server
-create session
-connect client A
-client A clicks +
-client A receives revision 1
-stop session actor
-restart session actor
-fetch snapshot
-counter is still 1
-```
-
-### 21.2 TodoMVC
-
-Scenario:
+### v0
 
 ```text
-start server
-create session
-connect clients A and B
-A adds "Buy milk"
-B receives snapshot containing "Buy milk"
-B toggles checkbox
-A receives checked state
-stop/restart session actor
-snapshot still has checked todo
-event log replay reconstructs same state
-```
-
-### 21.3 Duplicate and stale events
-
-Scenario:
-
-```text
-send event_id X at revision 1
-send event_id X again
-result is idempotent or rejected as duplicate
-
-send event with expected_revision too old
-server rejects with revision_conflict
-```
-
----
-
-## 22. Generated web frontend scenarios
-
-### 22.1 Counter web client
-
-```text
-Lustre app connects to backend session
-renders snapshot
-click + sends event over WebSocket
-receives updated snapshot
-renders new count
-```
-
-### 22.2 TodoMVC web client
-
-```text
-renders todo list
-typing creates local input event
-submit sends event to backend
-backend stores event
-snapshot returns
-list updates
-```
-
-The backend is source of truth.
-
----
-
-## 23. Error handling
-
-Every layer must produce clear diagnostics.
-
-Examples:
-
-```text
-Compiler parse error:
-  file, line, column, message, source excerpt
-
-Module collision:
-  two module paths and shared module name
-
-Codegen error:
-  FlowIR node type and source span
-
-Terminal error:
-  unsupported terminal capability or Etch error
-
-Backend error:
-  session id, event id, revision, store error
-
-Store error:
-  operation, key/session, message
-
-Protocol error:
-  raw JSON, expected schema, decoded problem
-```
-
-No silent failures.
-
----
-
-## 24. No fake pass rule
-
-A verification pass is invalid if achieved by:
-
-```text
-skipping examples
-hiding examples
-ignoring .expected files
-hardcoding output for a named example
-returning empty snapshots
-ignoring LINK events
-treating unsupported syntax as successful
-silently dropping modules
-silently dropping unsupported elements
-accepting events without updating state
-pretending durability without writing event logs
-pretending distributed behavior without session ownership
-```
-
-Unsupported features must produce explicit failing diagnostics.
-
----
-
-## 25. Definition of done: v0
-
-v0 is complete when:
-
-```text
-Gleam project builds.
-Compiler can parse and lower minimal, hello_world, counter.
-Generated core update/view exists.
+Gleam project builds and tests.
+Compiler parses and lowers minimal, hello_world, counter.
+Generated core update/view exists and is pure.
+BoonGleamRuntimeHost exists.
 Semantic expected runner works.
 Counter events work.
-Terminal TUI can launch.
-Pong can be played manually in terminal.
-Pong can be verified headlessly.
+Pong terminal play-smoke passes.
+Pong verifies headlessly.
 No non-Gleam implementation code is required.
 ```
 
@@ -2084,48 +1693,40 @@ gleam test
 gleam run -- verify examples/upstream/minimal
 gleam run -- verify examples/upstream/hello_world
 gleam run -- verify examples/upstream/counter
-gleam run -- play examples/terminal/pong
-gleam run -- verify examples/terminal/pong
+gleam run -- play-smoke examples/terminal/pong --ticks 1000 --timeout-ms 5000
+gleam run -- verify examples/terminal/pong --target terminal
 ```
 
----
-
-## 26. Definition of done: v1
-
-v1 is complete when:
+### v1
 
 ```text
-Arkanoid is playable and verified.
 TodoMVC semantic example passes.
-Terminal TUI playground is comfortable for manual use.
-Backend server can run counter with memory store.
-WebSocket client can receive snapshots and send events.
-Durability local store passes restart/replay tests.
+Arkanoid play-smoke passes.
+Terminal TUI has bounded smoke coverage and manual tmux/PTTY proof.
+Backend server runs counter with memory store.
+WebSocket client receives snapshots and sends events.
+Local durability passes restart/replay tests.
 ```
 
 Commands:
 
 ```bash
-gleam run -- play examples/terminal/arkanoid
-gleam run -- verify examples/terminal/arkanoid
 gleam run -- verify examples/upstream/todo_mvc
-gleam run -- serve examples/upstream/counter --store memory --port 8080
+gleam run -- play-smoke examples/terminal/arkanoid --ticks 1000 --timeout-ms 5000
+gleam run -- verify examples/terminal/arkanoid --target terminal
+gleam run -- serve-smoke examples/upstream/counter --store memory --port 8080 --timeout-ms 5000
 gleam run -- verify-backend examples/upstream/counter --store memory
 gleam run -- verify-durability examples/upstream/counter --store local
 ```
 
----
-
-## 27. Definition of done: durable backend
-
-The durable backend is complete when:
+### Durable Backend
 
 ```text
 Postgres store is implemented.
 Event log append is transactional.
 Snapshots are saved and loaded.
 Session actor restart replays state correctly.
-Duplicate event ids are handled.
+Duplicate event ids return deterministic results.
 Stale revisions are rejected.
 Two WebSocket clients receive consistent snapshots.
 TodoMVC passes backend verification with Postgres.
@@ -2134,24 +1735,21 @@ TodoMVC passes backend verification with Postgres.
 Commands:
 
 ```bash
-gleam run -- store setup-postgres
+gleam run -- store setup-postgres --database-url "$DATABASE_URL"
 gleam run -- verify-backend examples/upstream/todo_mvc --store postgres
 gleam run -- verify-durability examples/upstream/todo_mvc --store postgres
 ```
 
----
-
-## 28. Definition of done: full-stack experiment
-
-The full-stack experiment is complete when:
+### Full-Stack Experiment
 
 ```text
-Terminal TUI works.
-Backend server works.
-Lustre web client works.
+Terminal target works.
+Backend target works.
+Lustre durable client works.
 The same generated Boon core drives all targets.
 Counter and TodoMVC run through terminal, backend, and web-client targets.
 Durability and replay tests pass.
+Structural guardrails pass.
 ```
 
 Commands:
@@ -2159,85 +1757,89 @@ Commands:
 ```bash
 gleam run -- verify-all
 gleam run -- verify-backend examples/upstream/todo_mvc --store postgres
-gleam run -- web examples/upstream/todo_mvc
+gleam run -- web examples/upstream/todo_mvc --mode durable-client
 ```
 
 ---
 
-## 29. Codex implementation prompt
+## 19. Structural Guardrails
 
-Use this prompt when asking Codex to create the repository.
+These searches are required before claiming a milestone complete. Update exact
+patterns as the file layout evolves, but keep the intent.
+
+```bash
+# Generated core must not import IO/runtime adapters.
+rg -n "gleam_erlang|gleam_otp|mist|shelf|pog|etch|lustre|File|Process|Timer" build/generated/*/src/generated_*/ \
+  && exit 1 || true
+
+# Verifiers must not use wall-clock sleeps.
+rg -n "sleep|set_timeout|timer.sleep|process.sleep" src/verify src/terminal \
+  && exit 1 || true
+
+# Generated events must not collapse to untyped maps.
+rg -n "Dict\\(String|Map\\(String|event_json.*Dict" build/generated \
+  && exit 1 || true
+
+# No hidden pass-through skips.
+rg -n "TODO.*pass|fake pass|hardcode|skip.*example|empty snapshot" src \
+  && exit 1 || true
+
+# No source-name special casing in compiler/runtime.
+rg -n "counter|todo_mvc|pong|arkanoid|cells" src/lowering src/runtime src/codegen \
+  && exit 1 || true
+```
+
+If a guardrail has a legitimate false positive, add a narrow allowlist comment
+near the code and include it in the verification report.
+
+---
+
+## 20. Codex Implementation Prompt
+
+Use this prompt when asking Codex to create or continue the repository:
 
 ```text
-Create a new repository named boon-gleam using this AGENTS.md / implementation plan.
+Implement boon-gleam from BOON_GLEAM_IMPLEMENTATION_PLAN.md.
 
-Implement the project in Gleam.
+Do not add Zig, Rust, Pony, Raybox, Sokol, SDL, WebGPU, Slang, native renderer
+work, or a custom Wasm runtime. Gleam JS + Lustre is allowed only for the web
+target defined in the plan.
 
-Do not add Zig, Rust, Pony, Raybox, Sokol, SDL, WebGPU, Slang, or browser/Wasm tooling.
+Start with Phase 0, then proceed phase by phase. Do not skip a phase acceptance
+gate. Keep all targets going through the same generated init/update/view core.
 
-Start with:
-1. gleam.toml and basic CLI.
-2. lexer/parser for minimal Boon syntax needed by minimal, hello_world, and counter.
-3. HIR/FlowIR.
-4. generated Gleam core functions: init, update, view.
-5. semantic tree runtime.
-6. expected runner for assert_contains and click_button.
-7. counter example verification.
-8. Etch-based terminal TUI skeleton.
-9. direct playable Pong terminal target.
+Use BoonGleamRuntimeHost for verification. Use virtual time in all verifiers.
+Do not hardcode example output. Do not fake passing tests. Unsupported syntax
+must fail with named diagnostics and source spans.
 
-Keep all targets going through the same generated update/view core.
-Do not hardcode example output.
-Do not fake passing tests.
-Unsupported syntax must fail with explicit diagnostics.
+When a phase is complete, produce the exact command outputs and report paths
+listed in the plan before claiming completion.
 ```
 
 ---
 
-## 30. Reference links
-
-Gleam language:
+## 21. Reference Links
 
 ```text
-https://gleam.run/
-https://gleam.run/frequently-asked-questions/
-```
+Gleam:
+  https://gleam.run/
+  https://gleam.run/news/
 
-Gleam OTP:
+Erlang/OTP:
+  https://www.erlang.org/news
 
-```text
-https://hexdocs.pm/gleam_otp/index.html
-https://hexdocs.pm/gleam_otp/gleam/otp/actor.html
-```
-
-Terminal/TUI:
-
-```text
-https://hexdocs.pm/etch/index.html
-https://github.com/bgwdotdev/shore
-https://hexdocs.pm/gleam_community_ansi/gleam_community/ansi.html
-```
-
-Web/frontend/backend:
-
-```text
-https://hexdocs.pm/lustre/index.html
-https://hexdocs.pm/mist/index.html
-https://gleam-wisp.github.io/wisp/
-```
-
-Durability:
-
-```text
-https://hexdocs.pm/pog/pog.html
-https://hexdocs.pm/gleam_pgo/gleam/pgo.html
-https://hexdocs.pm/shelf/index.html
-https://hexdocs.pm/slate/index.html
-https://www.erlang.org/doc/apps/mnesia/mnesia.html
-```
+Hex packages:
+  https://hex.pm/packages/gleam_stdlib
+  https://hex.pm/packages/gleam_erlang
+  https://hex.pm/packages/gleam_otp
+  https://hex.pm/packages/gleam_json
+  https://hex.pm/packages/etch
+  https://hex.pm/packages/mist
+  https://hex.pm/packages/shelf
+  https://hex.pm/packages/pog
+  https://hex.pm/packages/lustre
 
 Boon:
-
-```text
-https://github.com/BoonLang/boon
+  https://github.com/BoonLang/boon
+  https://github.com/BoonLang/boon-zig
 ```
