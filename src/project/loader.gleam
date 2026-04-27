@@ -172,6 +172,8 @@ fn execute_build(
   case has_build_file {
     False -> Ok(None)
     True -> {
+      use build_source <- result_try(read_required_file(root <> "/BUILD.bn"))
+      use _ <- result_try(validate_build_contract(root, build_source))
       let icon_inputs = icon_input_files(root)
       use _ <- result_try(generate_assets(root, icon_inputs))
       Ok(
@@ -188,6 +190,36 @@ fn execute_build(
         ),
       )
     }
+  }
+}
+
+fn validate_build_contract(
+  root: String,
+  build_source: String,
+) -> Result(Nil, List(Diagnostic)) {
+  case
+    string.contains(build_source, "Directory/entries()")
+    && string.contains(build_source, "File/write_text(path: output_file)")
+    && string.contains(build_source, "Build/succeed()")
+    && string.contains(build_source, "./assets/icons")
+    && string.contains(build_source, "./Generated/Assets.bn")
+    && !string.contains(build_source, "../")
+    && !string.contains(build_source, " /")
+  {
+    True -> Ok(Nil)
+    False ->
+      Error([
+        error(
+          code: "unsupported_build_contract",
+          path: root <> "/BUILD.bn",
+          line: 1,
+          column: 1,
+          span_start: 0,
+          span_end: 0,
+          message: "BUILD.bn does not match the supported sandboxed asset generation contract",
+          help: "Phase 11 BUILD.bn may read ./assets/icons and write ./Generated/Assets.bn only",
+        ),
+      ])
   }
 }
 

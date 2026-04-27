@@ -40,6 +40,14 @@ pub fn build(
             src_dir <> "/snapshot.gleam",
             snapshot_source(example_path),
           ))
+          use _ <- result_try(write_output(
+            src_dir <> "/transport.gleam",
+            transport_source(),
+          ))
+          use _ <- result_try(write_output(
+            src_dir <> "/transport_ffi.mjs",
+            transport_ffi_source(),
+          ))
           Ok(WebReport(example: example_path, mode: mode, output_path: out_path))
         }
       }
@@ -63,7 +71,7 @@ pub fn build(
 fn package_toml() -> String {
   "name = \"boongleam_web_client\"\n"
   <> "version = \"0.1.0\"\n"
-  <> "target = \"erlang\"\n\n"
+  <> "target = \"javascript\"\n\n"
   <> "[dependencies]\n"
   <> "gleam_stdlib = \"1.0.0\"\n"
   <> "gleam_json = \"3.1.0\"\n"
@@ -77,6 +85,7 @@ fn client_source(example_path: String, mode: String) -> String {
   <> "import lustre_client/app\n"
   <> "import lustre_client/protocol\n"
   <> "import lustre_client/snapshot\n\n"
+  <> "import lustre_client/transport\n\n"
   <> "pub const example = \""
   <> example_path
   <> "\"\n\n"
@@ -87,6 +96,12 @@ fn client_source(example_path: String, mode: String) -> String {
   <> "pub fn render(model: app.Model) { snapshot.render(model.snapshot_text) }\n\n"
   <> "pub fn encode_event(event_id: String, expected_revision: Int, name: String) -> json.Json {\n"
   <> "  protocol.event(event_id, expected_revision, name)\n"
+  <> "}\n\n"
+  <> "pub fn connect(base_url: String, project_id: String, session_id: String) {\n"
+  <> "  transport.connect(base_url, project_id, session_id)\n"
+  <> "}\n\n"
+  <> "pub fn send_event(socket: transport.Socket, event_id: String, expected_revision: Int, name: String) {\n"
+  <> "  transport.send_event(socket, event_id, expected_revision, name)\n"
   <> "}\n\n"
   <> "pub fn marker() { element.none() }\n\n"
   <> "pub fn lustre_app() { lustre.element(marker()) }\n"
@@ -121,6 +136,7 @@ fn app_source(example_path: String, mode: String) -> String {
   <> "  SnapshotReceived(revision: Int, text: String)\n"
   <> "  EventAck(event_id: String, revision: Int)\n"
   <> "  EventRejected(event_id: String, reason: String)\n"
+  <> "  Diagnostic(message: String)\n"
   <> "}\n\n"
   <> "pub fn init() -> Model {\n"
   <> "  Model(example: \""
@@ -140,6 +156,64 @@ fn snapshot_source(example_path: String) -> String {
   <> "\"\n\n"
   <> "pub fn render(text: String) -> String {\n"
   <> "  text\n"
+  <> "}\n"
+}
+
+fn transport_source() -> String {
+  "import gleam/json\n"
+  <> "import lustre_client/protocol\n\n"
+  <> "pub type Socket\n\n"
+  <> "@external(javascript, \"./transport_ffi.mjs\", \"connect\")\n"
+  <> "pub fn connect(base_url: String, project_id: String, session_id: String) -> Socket\n\n"
+  <> "@external(javascript, \"./transport_ffi.mjs\", \"send_json\")\n"
+  <> "pub fn send_json(socket: Socket, message: String) -> Nil\n\n"
+  <> "@external(javascript, \"./transport_ffi.mjs\", \"last_snapshot_text\")\n"
+  <> "pub fn last_snapshot_text(socket: Socket) -> String\n\n"
+  <> "@external(javascript, \"./transport_ffi.mjs\", \"last_revision\")\n"
+  <> "pub fn last_revision(socket: Socket) -> Int\n\n"
+  <> "pub fn subscribe(socket: Socket) -> Nil {\n"
+  <> "  send_json(socket, json.to_string(protocol.subscribe()))\n"
+  <> "}\n\n"
+  <> "pub fn request_snapshot(socket: Socket) -> Nil {\n"
+  <> "  send_json(socket, json.to_string(protocol.get_snapshot()))\n"
+  <> "}\n\n"
+  <> "pub fn ping(socket: Socket) -> Nil {\n"
+  <> "  send_json(socket, json.to_string(protocol.ping()))\n"
+  <> "}\n\n"
+  <> "pub fn send_event(socket: Socket, event_id: String, expected_revision: Int, name: String) -> Nil {\n"
+  <> "  send_json(socket, json.to_string(protocol.event(event_id, expected_revision, name)))\n"
+  <> "}\n"
+}
+
+fn transport_ffi_source() -> String {
+  "export function connect(baseUrl, projectId, sessionId) {\n"
+  <> "  const root = baseUrl.replace(/\\/$/, \"\").replace(/^http/, \"ws\");\n"
+  <> "  const socket = new WebSocket(`${root}/ws/projects/${projectId}/sessions/${sessionId}`);\n"
+  <> "  socket.__boon = { revision: 0, snapshotText: \"\", frames: [] };\n"
+  <> "  socket.addEventListener(\"open\", () => {\n"
+  <> "    socket.send(JSON.stringify({ type: \"subscribe\" }));\n"
+  <> "  });\n"
+  <> "  socket.addEventListener(\"message\", (event) => {\n"
+  <> "    socket.__boon.frames.push(event.data);\n"
+  <> "    try {\n"
+  <> "      const frame = JSON.parse(event.data);\n"
+  <> "      if (frame.type === \"snapshot\") {\n"
+  <> "        socket.__boon.revision = frame.revision;\n"
+  <> "        socket.__boon.snapshotText = frame.snapshot && frame.snapshot.text || \"\";\n"
+  <> "      }\n"
+  <> "      if (frame.type === \"event_ack\") socket.__boon.revision = frame.revision;\n"
+  <> "    } catch (_) {}\n"
+  <> "  });\n"
+  <> "  return socket;\n"
+  <> "}\n\n"
+  <> "export function send_json(socket, message) {\n"
+  <> "  if (socket.readyState === WebSocket.OPEN) socket.send(message);\n"
+  <> "}\n\n"
+  <> "export function last_snapshot_text(socket) {\n"
+  <> "  return socket.__boon && socket.__boon.snapshotText || \"\";\n"
+  <> "}\n\n"
+  <> "export function last_revision(socket) {\n"
+  <> "  return socket.__boon && socket.__boon.revision || 0;\n"
   <> "}\n"
 }
 

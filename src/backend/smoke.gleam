@@ -1,3 +1,5 @@
+import backend/local_store
+import backend/postgres
 import backend/session.{type StoreKind}
 import frontend/diagnostic.{type Diagnostic, error}
 import gleam/bytes_tree
@@ -40,8 +42,14 @@ pub fn serve_smoke(
     0 -> 18_080
     _ -> port
   }
+  use initial_session <- result_try_store_session(initial_backend_session(
+    example_path,
+    store,
+    "backend session ready",
+    True,
+  ))
   let session =
-    session.start(example_path, store, "backend session ready")
+    initial_session
     |> session.dispatch("connect")
     |> session.dispatch("snapshot")
 
@@ -93,6 +101,37 @@ pub fn serve_smoke(
       <> "/events",
     "",
   ))
+  use _ <- result_try(validate_status("health", health, 200))
+  use _ <- result_try(validate_status("project", project, 201))
+  use _ <- result_try(validate_status("session", session_response, 201))
+  use _ <- result_try(validate_status("snapshot", snapshot, 200))
+  use _ <- result_try(validate_status("events", events, 200))
+  use websocket_trace <- result_try_websocket(http_client.websocket_smoke(
+    "127.0.0.1",
+    actual_port,
+    "/ws/projects/"
+      <> session.id.project_id
+      <> "/sessions/"
+      <> session.id.session_id,
+    websocket_messages(session),
+  ))
+  use second_websocket_trace <- result_try_websocket(
+    http_client.websocket_smoke(
+      "127.0.0.1",
+      actual_port,
+      "/ws/projects/"
+        <> session.id.project_id
+        <> "/sessions/"
+        <> session.id.session_id,
+      second_websocket_messages(),
+    ),
+  )
+  let combined_websocket_trace =
+    list.append(websocket_trace, second_websocket_trace)
+  use _ <- result_try(validate_websocket_trace(
+    combined_websocket_trace,
+    session.revision + 1,
+  ))
   use clear <- result_try_http(http_client.request(
     "POST",
     base_url(actual_port)
@@ -103,23 +142,7 @@ pub fn serve_smoke(
       <> "/clear",
     "",
   ))
-
-  use _ <- result_try(validate_status("health", health, 200))
-  use _ <- result_try(validate_status("project", project, 201))
-  use _ <- result_try(validate_status("session", session_response, 201))
-  use _ <- result_try(validate_status("snapshot", snapshot, 200))
-  use _ <- result_try(validate_status("events", events, 200))
   use _ <- result_try(validate_status("clear", clear, 200))
-  use websocket_trace <- result_try_websocket(http_client.websocket_smoke(
-    "127.0.0.1",
-    actual_port,
-    "/ws/projects/"
-      <> session.id.project_id
-      <> "/sessions/"
-      <> session.id.session_id,
-    websocket_messages(session),
-  ))
-  use _ <- result_try(validate_websocket_trace(websocket_trace))
 
   let report =
     BackendReport(
@@ -134,9 +157,9 @@ pub fn serve_smoke(
       snapshot_status: snapshot.0,
       events_status: events.0,
       clear_status: clear.0,
-      websocket_trace: websocket_trace,
+      websocket_trace: combined_websocket_trace,
     )
-  use _ <- result_try(write_report(report, "build/reports/backend/counter.json"))
+  use _ <- result_try(write_report(report, report_path(example_path)))
   Ok(report)
 }
 
@@ -152,8 +175,12 @@ pub fn serve(
   store: StoreKind,
   port: Int,
 ) -> Result(Nil, List(Diagnostic)) {
-  let backend_session =
-    session.start(example_path, store, "backend session ready")
+  use backend_session <- result_try_store_session(initial_backend_session(
+    example_path,
+    store,
+    "backend session ready",
+    False,
+  ))
   use _server <- result_try_server(start_server(
     example_path,
     store,
@@ -176,6 +203,54 @@ fn start_server(
   |> mist.port(port)
   |> mist.after_start(fn(_, _, _) { Nil })
   |> mist.start
+}
+
+fn initial_backend_session(
+  example_path: String,
+  store: StoreKind,
+  snapshot_text: String,
+  reset: Bool,
+) -> Result(session.BackendSession, session.StoreError) {
+  case store {
+    session.Local -> {
+      let backend_session =
+        session.start_with_store(
+          example_path,
+          store,
+          snapshot_text,
+          local_store.new(),
+        )
+      case reset {
+        True -> {
+          use _ <- result_try_store(session.clear_durable(backend_session))
+          Ok(backend_session)
+        }
+        False -> Ok(session.recover(backend_session))
+      }
+    }
+    session.Postgres -> {
+      case postgres.store_from_env() {
+        Error(error) -> Error(error)
+        Ok(store_driver) -> {
+          let backend_session =
+            session.start_with_store(
+              example_path,
+              store,
+              snapshot_text,
+              store_driver,
+            )
+          case reset {
+            True -> {
+              use _ <- result_try_store(session.clear_durable(backend_session))
+              Ok(backend_session)
+            }
+            False -> Ok(session.recover(backend_session))
+          }
+        }
+      }
+    }
+    _ -> Ok(session.start(example_path, store, snapshot_text))
+  }
 }
 
 fn handle_request(
@@ -262,7 +337,17 @@ fn handle_request(
       ["projects", requested_project, "sessions", requested_session, "clear"]
     ->
       case requested_project == project_id && requested_session == session_id {
-        True -> json_response(200, "{\"cleared\":true}")
+        True ->
+          case session.clear_durable(backend_session) {
+            Ok(_) -> json_response(200, "{\"cleared\":true}")
+            Error(error) ->
+              json_response(
+                500,
+                "{\"error\":{\"code\":\"store_clear_failed\",\"message\":\""
+                  <> escape_json(store_error_message(error))
+                  <> "\"}}",
+              )
+          }
         False -> not_found("session_not_found")
       }
     Get, ["ws", "projects", requested_project, "sessions", requested_session] ->
@@ -270,7 +355,15 @@ fn handle_request(
         True ->
           mist.websocket(
             request: request,
-            on_init: fn(_connection) { #(backend_session, None) },
+            on_init: fn(_connection) {
+              #(
+                backend_session
+                  |> attach_ws_store
+                  |> session.recover
+                  |> session.detach_store,
+                None,
+              )
+            },
             on_close: fn(_state) { Nil },
             handler: handle_ws_message,
           )
@@ -356,7 +449,7 @@ fn handle_ws_event(
     True ->
       case
         session.accept_event(
-          state,
+          attach_ws_store(state),
           "ws-event-" <> int.to_string(state.revision + 1),
           state.revision,
           "websocket",
@@ -373,7 +466,7 @@ fn handle_ws_event(
                 <> "}",
             )
           let _ = mist.send_text_frame(connection, ws_snapshot(next_state))
-          mist.continue(next_state)
+          mist.continue(session.detach_store(next_state))
         }
         Error(session.RevisionConflict(current_revision)) -> {
           let _ =
@@ -399,6 +492,18 @@ fn handle_ws_event(
   }
 }
 
+fn attach_ws_store(state: session.BackendSession) -> session.BackendSession {
+  case state.store {
+    session.Local -> session.attach_store(state, local_store.new())
+    session.Postgres ->
+      case postgres.store_from_env() {
+        Ok(store_driver) -> session.attach_store(state, store_driver)
+        Error(_) -> state
+      }
+    _ -> state
+  }
+}
+
 fn ws_snapshot(state: session.BackendSession) -> String {
   "{\"type\":\"snapshot\",\"revision\":"
   <> int.to_string(state.revision)
@@ -417,6 +522,10 @@ fn write_report(
       file.write_text_file(path, report_json(report))
       |> result_try_io
   }
+}
+
+fn report_path(example_path: String) -> String {
+  "build/reports/backend/" <> session.project_id(example_path) <> ".json"
 }
 
 fn report_json(report: BackendReport) -> String {
@@ -552,14 +661,27 @@ fn websocket_messages(backend_session: session.BackendSession) -> List(String) {
   ]
 }
 
+fn second_websocket_messages() -> List(String) {
+  [
+    "{\"type\":\"subscribe\"}",
+    "{\"type\":\"get_snapshot\"}",
+  ]
+}
+
 fn validate_websocket_trace(
   frames: List(String),
+  latest_revision: Int,
 ) -> Result(Nil, List(Diagnostic)) {
   let joined = string.join(frames, with: "\n")
   case
     string.contains(joined, "\"type\":\"snapshot\"")
     && string.contains(joined, "\"type\":\"pong\"")
     && string.contains(joined, "\"type\":\"event_ack\"")
+    && contains_at_least(
+      joined,
+      "\"revision\":" <> int.to_string(latest_revision),
+      2,
+    )
   {
     True -> Ok(Nil)
     False ->
@@ -571,10 +693,36 @@ fn validate_websocket_trace(
           column: 1,
           span_start: 0,
           span_end: 0,
-          message: "WebSocket smoke did not receive snapshot, pong, and event_ack frames",
+          message: "WebSocket smoke did not receive snapshot, pong, and event_ack frames: "
+            <> joined,
           help: "the WebSocket protocol must satisfy fixtures/protocol_schema.json",
         ),
       ])
+  }
+}
+
+fn contains_at_least(
+  value: String,
+  needle: String,
+  expected_count: Int,
+) -> Bool {
+  contains_at_least_loop(value, needle, expected_count, 0)
+}
+
+fn contains_at_least_loop(
+  value: String,
+  needle: String,
+  expected_count: Int,
+  count: Int,
+) -> Bool {
+  case count >= expected_count {
+    True -> True
+    False ->
+      case string.split_once(value, on: needle) {
+        Ok(#(_, after)) ->
+          contains_at_least_loop(after, needle, expected_count, count + 1)
+        Error(_) -> False
+      }
   }
 }
 
@@ -597,6 +745,46 @@ fn result_try_websocket(
           help: "bounded backend smoke must complete a real WebSocket handshake and frame exchange",
         ),
       ])
+  }
+}
+
+fn result_try_store_session(
+  result: Result(a, session.StoreError),
+  next: fn(a) -> Result(b, List(Diagnostic)),
+) -> Result(b, List(Diagnostic)) {
+  case result {
+    Ok(value) -> next(value)
+    Error(store_error) ->
+      Error([
+        error(
+          code: "backend_store_failed",
+          path: "backend/session",
+          line: 1,
+          column: 1,
+          span_start: 0,
+          span_end: 0,
+          message: store_error_message(store_error),
+          help: "selected backend store must accept events, snapshots, and session clears",
+        ),
+      ])
+  }
+}
+
+fn result_try_store(
+  result: Result(a, session.StoreError),
+  next: fn(a) -> Result(b, session.StoreError),
+) -> Result(b, session.StoreError) {
+  case result {
+    Ok(value) -> next(value)
+    Error(error) -> Error(error)
+  }
+}
+
+fn store_error_message(error: session.StoreError) -> String {
+  case error {
+    session.RevisionConflict(current_revision) ->
+      "revision conflict at " <> int.to_string(current_revision)
+    session.StoreUnavailable(message) -> message
   }
 }
 
@@ -634,7 +822,7 @@ fn result_try_io(result: Result(a, String)) -> Result(a, List(Diagnostic)) {
       Error([
         error(
           code: "backend_report_write_failed",
-          path: "build/reports/backend/counter.json",
+          path: "build/reports/backend",
           line: 1,
           column: 1,
           span_start: 0,

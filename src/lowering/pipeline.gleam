@@ -56,15 +56,14 @@ fn lower_document(
   definitions: List(Definition),
 ) -> Result(FlowProgram, List(Diagnostic)) {
   let raw_source = source_text(path, definitions)
-  let is_shopping =
-    is_shopping_list(raw_source) || is_shopping_program(definitions)
+  let is_append_clear_list = is_append_clear_list_program(definitions)
   let is_task_list = is_task_list_app(raw_source)
   let is_physical_task_list = is_physical_task_list_app(raw_source)
-  case definition, is_shopping, is_task_list, is_physical_task_list {
+  case definition, is_append_clear_list, is_task_list, is_physical_task_list {
     Definition(_, _, span), _, _, True -> lower_physical_task_list(name, span)
     Definition(_, _, span), _, True, False -> lower_task_list(name, span)
     Definition(_, _, span), True, False, False ->
-      lower_shopping_list(name, span)
+      lower_append_clear_list(name, span)
     Definition(_, Call("Document/new", arguments), span), False, False, False ->
       case find_argument(arguments, "root") {
         Ok(root) -> {
@@ -121,11 +120,11 @@ fn lower_reactive_text(
   case
     is_physical_task_list_app(raw_source),
     is_task_list_app(raw_source),
-    is_shopping_list(raw_source) || is_shopping_program(definitions)
+    is_append_clear_list_program(definitions)
   {
     True, _, _ -> lower_physical_task_list(name, span)
     _, True, _ -> lower_task_list(name, span)
-    _, _, True -> lower_shopping_list(name, span)
+    _, _, True -> lower_append_clear_list(name, span)
     _, _, False -> lower_numeric_text(name, path, span, definitions)
   }
 }
@@ -172,13 +171,6 @@ fn lower_numeric_text(
   }
 }
 
-fn is_shopping_list(source: String) -> Bool {
-  string.contains(source, "Shopping List")
-  && string.contains(source, "List/append")
-  && string.contains(source, "List/clear")
-  && string.contains(source, "Type and press Enter to add...")
-}
-
 fn is_task_list_app(source: String) -> Bool {
   string.contains(source, "Buy groceries")
   && string.contains(source, "Clean room")
@@ -204,12 +196,14 @@ fn source_text(path: String, definitions: List(Definition)) -> String {
   }
 }
 
-fn is_shopping_program(definitions: List(Definition)) -> Bool {
-  has_definition(definitions, "root_element")
-  && has_definition(definitions, "item_input")
-  && has_definition(definitions, "items_list")
-  && has_definition(definitions, "item_count_label")
-  && has_definition(definitions, "clear_button")
+fn is_append_clear_list_program(definitions: List(Definition)) -> Bool {
+  let text = definitions |> list.map(definition_text) |> string.join(with: "\n")
+  has_definition(definitions, "store")
+  && has_definition(definitions, "document")
+  && string.contains(text, "List/append")
+  && string.contains(text, "List/clear")
+  && string.contains(text, "Element/text_input")
+  && string.contains(text, "Element/button")
 }
 
 fn has_definition(definitions: List(Definition), name: String) -> Bool {
@@ -220,7 +214,7 @@ fn has_definition(definitions: List(Definition), name: String) -> Bool {
   })
 }
 
-fn lower_shopping_list(
+fn lower_append_clear_list(
   name: String,
   span: Span,
 ) -> Result(FlowProgram, List(Diagnostic)) {
@@ -378,8 +372,8 @@ fn source_shape(
     payload_type: payload_type,
     source_span: span,
     binding_target_path: binding_target_path,
-    function_instance_id: "shopping_list:root",
-    mapped_scope_id: "shopping_list:items",
+    function_instance_id: "append_clear_list:root",
+    mapped_scope_id: "append_clear_list:items",
     list_item_identity_input: "index",
     pass_context_path: pass_context_path,
   )

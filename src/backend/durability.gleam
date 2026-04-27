@@ -1,3 +1,5 @@
+import backend/local_store
+import backend/postgres
 import backend/session.{type StoreKind}
 import frontend/diagnostic.{type Diagnostic, error}
 import gleam/int
@@ -19,7 +21,7 @@ pub fn verify(
   example_path: String,
   store: StoreKind,
 ) -> Result(DurabilityReport, List(Diagnostic)) {
-  let started = session.start(example_path, store, "durable snapshot")
+  use started <- result_try_store(start_durable_session(example_path, store))
   use first <- result_try_store(session.accept_event(
     started,
     "event-add",
@@ -50,7 +52,7 @@ pub fn verify(
     _ -> False
   }
 
-  let recovered = session.recover(after_second)
+  let recovered = recover_durable_session(example_path, store, after_second)
   let report =
     DurabilityReport(
       example: example_path,
@@ -65,8 +67,68 @@ pub fn verify(
   Ok(report)
 }
 
+fn start_durable_session(
+  example_path: String,
+  store: StoreKind,
+) -> Result(session.BackendSession, session.StoreError) {
+  case store {
+    session.Local -> {
+      let backend_session =
+        session.start_with_store(
+          example_path,
+          store,
+          "durable snapshot",
+          local_store.new(),
+        )
+      case session.clear_durable(backend_session) {
+        Ok(_) -> Ok(backend_session)
+        Error(error) -> Error(error)
+      }
+    }
+    session.Postgres ->
+      case postgres.store_from_env() {
+        Error(error) -> Error(error)
+        Ok(store_driver) -> {
+          let backend_session =
+            session.start_with_store(
+              example_path,
+              store,
+              "durable snapshot",
+              store_driver,
+            )
+          case session.clear_durable(backend_session) {
+            Ok(_) -> Ok(backend_session)
+            Error(error) -> Error(error)
+          }
+        }
+      }
+    _ -> Ok(session.start(example_path, store, "durable snapshot"))
+  }
+}
+
+fn recover_durable_session(
+  example_path: String,
+  store: StoreKind,
+  current: session.BackendSession,
+) -> session.BackendSession {
+  case store {
+    session.Local ->
+      session.start_with_store(example_path, store, "", local_store.new())
+      |> session.recover
+    session.Postgres ->
+      case postgres.store_from_env() {
+        Ok(store_driver) ->
+          session.start_with_store(example_path, store, "", store_driver)
+          |> session.recover
+        Error(_) -> session.recover(current)
+      }
+    _ -> session.recover(current)
+  }
+}
+
 fn write_report(report: DurabilityReport) -> Result(Nil, List(Diagnostic)) {
-  let path = "build/reports/durability/todo_mvc.json"
+  let path =
+    "build/reports/durability/" <> session.project_id(report.example) <> ".json"
   case result_try_io(file.make_dir_all("build/reports/durability")) {
     Error(diagnostics) -> Error(diagnostics)
     Ok(_) ->
@@ -158,7 +220,7 @@ fn result_try_io(result: Result(a, String)) -> Result(a, List(Diagnostic)) {
       Error([
         error(
           code: "durability_report_write_failed",
-          path: "build/reports/durability/todo_mvc.json",
+          path: "build/reports/durability",
           line: 1,
           column: 1,
           span_start: 0,
