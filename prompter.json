@@ -1,5 +1,5 @@
 {
-  "instance_label": null,
+  "instance_label": "boon-gleam",
   "port": 4848,
   "command": [
     "co"
