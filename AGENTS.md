@@ -13,15 +13,15 @@ Use it for verifier and test helper windows too, not only manual commands.
 Use the helper around the actual command that creates the window:
 
 ```sh
-cosmic-background-launch --workspace codex -- gleam run -m boongleam -- browser --serve --example counter --port 8080
-cosmic-background-launch --workspace codex -- firefox http://127.0.0.1:8080/
+cosmic-background-launch --workspace boon-gleam -- gleam run -m boongleam -- browser --serve --example counter --port 8080
+cosmic-background-launch --workspace boon-gleam -- firefox http://127.0.0.1:8080/
 ```
 
 For native GUI commands, keep the wrapper as close as possible to the real
 window-creating phase:
 
 ```sh
-cosmic-background-launch --workspace codex -- gleam run -m boongleam -- gui --example counter
+cosmic-background-launch --workspace boon-gleam -- gleam run -m boongleam -- gui --example counter
 ```
 
 Verifier/test commands that create windows must also go through the helper. The

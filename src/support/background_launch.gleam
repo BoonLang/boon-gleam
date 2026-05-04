@@ -3,6 +3,8 @@ import gleam/int
 import gleam/string
 import support/file
 
+const workspace_name = "boon-gleam"
+
 @external(erlang, "os", "cmd")
 fn os_cmd(command: Charlist) -> Charlist
 
@@ -41,7 +43,9 @@ pub fn run_and_wait(
         <> shell_quote(output_path)
         <> "; chmod +x "
         <> shell_quote(script_path)
-        <> "; cosmic-background-launch --workspace codex -- sh "
+        <> "; cosmic-background-launch --workspace "
+        <> shell_quote(workspace_name)
+        <> " -- sh "
         <> shell_quote(script_path)
         <> " > "
         <> shell_quote(output_path)

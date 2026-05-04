@@ -237,7 +237,7 @@ fn run_gtk_verify(scene_path: String) -> List(String) {
 
 fn run_gtk_manual(scene_path: String) -> List(String) {
   let command =
-    "cosmic-background-launch --workspace codex -- "
+    "cosmic-background-launch --workspace boon-gleam -- "
     <> gtk_binary()
     <> " "
     <> scene_path
