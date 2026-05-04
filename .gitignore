@@ -1,4 +1,4 @@
 /.gleam/
 /build/
+/.boon-local/
 /erl_crash.dump
-

@@ -310,13 +310,15 @@ int main(int argc, char **argv) {
   }
   app.selected_catalog = catalog_index(&app, app.scene.name);
 
-  if (!SDL_CreateWindowAndRenderer("Boon Gleam SDL3 Playground", 1280, 760, 0, &app.window, &app.renderer)) {
+  if (!SDL_CreateWindowAndRenderer("Boon Gleam SDL3 Playground", 1440, 900, SDL_WINDOW_RESIZABLE, &app.window, &app.renderer)) {
     SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
     free_catalog(&app);
     free_scene(&app.scene);
     SDL_Quit();
     return 1;
   }
+  SDL_SetWindowMinimumSize(app.window, 900, 560);
+  SDL_SetRenderLogicalPresentation(app.renderer, 1280, 760, SDL_LOGICAL_PRESENTATION_LETTERBOX);
   app.exit_at = SDL_GetTicks() + (Uint64)exit_ms;
 
   bool running = true;
