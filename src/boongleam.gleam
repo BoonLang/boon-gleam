@@ -106,15 +106,7 @@ fn gui(args: List(String)) -> Nil {
         flag_string(args, "--report", "build/reports/gui-playground.json")
       case native_playground.run(example, report_path) {
         Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-        Ok(proof) ->
-          io.println(
-            "native gui "
-            <> proof.example
-            <> " status="
-            <> proof.status
-            <> " report="
-            <> report_path,
-          )
+        Ok(proof) -> finish_playground_proof("native gui", proof, report_path)
       }
     }
   }
@@ -151,36 +143,112 @@ fn verify_playgrounds(args: List(String)) -> Nil {
   let report_path =
     flag_string(args, "--report", "build/reports/verify-playgrounds.json")
   let example = flag_string(args, "--example", "todo_mvc")
+  case has_flag(args, "--all") {
+    True -> verify_playgrounds_all(report_path)
+    False -> verify_playgrounds_one(example, report_path)
+  }
+}
+
+fn verify_playgrounds_one(example: String, report_path: String) -> Nil {
   case playground_core.scene(example, playground_core.TerminalTarget) {
     Error(diagnostics) -> fail_with_diagnostics(diagnostics)
     Ok(terminal_scene) ->
-      case playground_core.scene(example, playground_core.BrowserGuiTarget) {
+      case playground_core.scene(example, playground_core.NativeGuiTarget) {
         Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-        Ok(browser_scene) -> {
-          let terminal_proof =
-            playground_core.proof("verify-playgrounds terminal", terminal_scene)
-          let browser_proof =
-            playground_core.proof("verify-playgrounds browser", browser_scene)
-          let report =
-            "{\n"
-            <> "  \"command\": \"verify-playgrounds\",\n"
-            <> "  \"example\": \""
-            <> example
-            <> "\",\n"
-            <> "  \"proofs\": ["
-            <> playground_core.proof_json(terminal_proof)
-            <> ","
-            <> playground_core.proof_json(browser_proof)
-            <> "  ]\n"
-            <> "}\n"
-          maybe_write_report(report_path, report)
-          io.println(
-            "verify-playgrounds example="
-            <> example
-            <> " report="
-            <> report_path,
-          )
-        }
+        Ok(native_scene) ->
+          case
+            playground_core.scene(example, playground_core.BrowserGuiTarget)
+          {
+            Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+            Ok(browser_scene) -> {
+              let proofs = [
+                playground_core.proof(
+                  "verify-playgrounds terminal",
+                  terminal_scene,
+                ),
+                playground_core.proof("verify-playgrounds native", native_scene),
+                playground_core.proof(
+                  "verify-playgrounds browser",
+                  browser_scene,
+                ),
+              ]
+              let report =
+                playground_core.proofs_json("verify-playgrounds", proofs)
+              maybe_write_report(report_path, report)
+              io.println(
+                "verify-playgrounds example="
+                <> example
+                <> " report="
+                <> report_path,
+              )
+              case playground_core.all_passed(proofs) {
+                True -> Nil
+                False -> os.exit(1)
+              }
+            }
+          }
+      }
+  }
+}
+
+fn verify_playgrounds_all(report_path: String) -> Nil {
+  case verify_playgrounds_loop(playground_core.catalog(), []) {
+    Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+    Ok(proofs) -> {
+      let report =
+        playground_core.proofs_json("verify-playgrounds --all", proofs)
+      maybe_write_report(report_path, report)
+      io.println("verify-playgrounds --all report=" <> report_path)
+      case playground_core.all_passed(proofs) {
+        True -> Nil
+        False -> os.exit(1)
+      }
+    }
+  }
+}
+
+fn verify_playgrounds_loop(
+  examples: List(playground_core.CatalogExample),
+  acc: List(playground_core.PlaygroundProof),
+) -> Result(List(playground_core.PlaygroundProof), List(diagnostic.Diagnostic)) {
+  case examples {
+    [] -> Ok(list.reverse(acc))
+    [example, ..rest] ->
+      case playground_core.scene(example.name, playground_core.TerminalTarget) {
+        Error(diagnostics) -> Error(diagnostics)
+        Ok(terminal_scene) ->
+          case
+            playground_core.scene(example.name, playground_core.NativeGuiTarget)
+          {
+            Error(diagnostics) -> Error(diagnostics)
+            Ok(native_scene) ->
+              case
+                playground_core.scene(
+                  example.name,
+                  playground_core.BrowserGuiTarget,
+                )
+              {
+                Error(diagnostics) -> Error(diagnostics)
+                Ok(browser_scene) -> {
+                  let next = [
+                    playground_core.proof(
+                      "verify-playgrounds terminal",
+                      terminal_scene,
+                    ),
+                    playground_core.proof(
+                      "verify-playgrounds native",
+                      native_scene,
+                    ),
+                    playground_core.proof(
+                      "verify-playgrounds browser",
+                      browser_scene,
+                    ),
+                    ..acc
+                  ]
+                  verify_playgrounds_loop(rest, next)
+                }
+              }
+          }
       }
   }
 }
@@ -190,28 +258,39 @@ fn verify_gui(args: List(String)) -> Nil {
   let backend = flag_string(args, "--backend", "headless")
   let report_path =
     flag_string(args, "--report", "build/reports/verify-gui-headless.json")
+  case has_flag(args, "--all") {
+    True -> verify_gui_all(backend, report_path)
+    False -> verify_gui_one(example, backend, report_path)
+  }
+}
+
+fn verify_gui_one(
+  example: String,
+  backend: String,
+  report_path: String,
+) -> Nil {
   case backend {
     "headless" ->
       case native_playground.verify(example, report_path) {
         Error(diagnostics) -> fail_with_diagnostics(diagnostics)
         Ok(proof) ->
-          io.println(
-            "verify-gui "
-            <> proof.example
-            <> " backend=headless status="
-            <> proof.status,
+          finish_playground_proof(
+            "verify-gui backend=headless",
+            proof,
+            report_path,
           )
       }
-    "sdl3" ->
-      case native_playground.run(example, report_path) {
+    "gtk4" ->
+      case native_playground.verify_gtk(example, report_path) {
         Error(diagnostics) -> fail_with_diagnostics(diagnostics)
         Ok(proof) ->
-          io.println(
-            "verify-gui "
-            <> proof.example
-            <> " backend=sdl3 status="
-            <> proof.status,
-          )
+          finish_playground_proof("verify-gui backend=gtk4", proof, report_path)
+      }
+    "sdl3" ->
+      case native_playground.run_sdl3(example, report_path) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(proof) ->
+          finish_playground_proof("verify-gui backend=sdl3", proof, report_path)
       }
     _ ->
       fail_with_diagnostics([
@@ -223,7 +302,7 @@ fn verify_gui(args: List(String)) -> Nil {
           span_start: 0,
           span_end: 0,
           message: "unsupported GUI backend: " <> backend,
-          help: "use --backend headless or --backend sdl3",
+          help: "use --backend headless, gtk4, or sdl3",
         ),
       ])
   }
@@ -233,15 +312,130 @@ fn verify_browser(args: List(String)) -> Nil {
   let example = flag_string(args, "--example", "todo_mvc")
   let report_path =
     flag_string(args, "--report", "build/reports/verify-browser-firefox.json")
+  case has_flag(args, "--all") {
+    True -> verify_browser_all(report_path)
+    False -> verify_browser_one(example, report_path)
+  }
+}
+
+fn verify_browser_one(example: String, report_path: String) -> Nil {
   case browser_playground.verify(example, report_path) {
     Error(diagnostics) -> fail_with_diagnostics(diagnostics)
     Ok(proof) ->
-      io.println(
-        "verify-browser "
-        <> proof.example
-        <> " browser=firefox status="
-        <> proof.status,
+      finish_playground_proof(
+        "verify-browser browser=firefox",
+        proof,
+        report_path,
       )
+  }
+}
+
+fn verify_browser_all(report_path: String) -> Nil {
+  case verify_browser_loop(playground_core.catalog(), []) {
+    Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+    Ok(proofs) -> {
+      let report = playground_core.proofs_json("verify-browser --all", proofs)
+      maybe_write_report(report_path, report)
+      io.println("verify-browser --all report=" <> report_path)
+      case playground_core.all_passed(proofs) {
+        True -> Nil
+        False -> os.exit(1)
+      }
+    }
+  }
+}
+
+fn verify_browser_loop(
+  examples: List(playground_core.CatalogExample),
+  acc: List(playground_core.PlaygroundProof),
+) -> Result(List(playground_core.PlaygroundProof), List(diagnostic.Diagnostic)) {
+  case examples {
+    [] -> Ok(list.reverse(acc))
+    [example, ..rest] -> {
+      let report_path =
+        "build/reports/verify-browser-" <> example.name <> ".json"
+      case browser_playground.verify(example.name, report_path) {
+        Error(diagnostics) -> Error(diagnostics)
+        Ok(proof) -> verify_browser_loop(rest, [proof, ..acc])
+      }
+    }
+  }
+}
+
+fn verify_gui_all(backend: String, report_path: String) -> Nil {
+  case verify_gui_loop(playground_core.catalog(), backend, []) {
+    Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+    Ok(proofs) -> {
+      let report =
+        playground_core.proofs_json(
+          "verify-gui --all --backend " <> backend,
+          proofs,
+        )
+      maybe_write_report(report_path, report)
+      io.println(
+        "verify-gui --all backend=" <> backend <> " report=" <> report_path,
+      )
+      case playground_core.all_passed(proofs) {
+        True -> Nil
+        False -> os.exit(1)
+      }
+    }
+  }
+}
+
+fn verify_gui_loop(
+  examples: List(playground_core.CatalogExample),
+  backend: String,
+  acc: List(playground_core.PlaygroundProof),
+) -> Result(List(playground_core.PlaygroundProof), List(diagnostic.Diagnostic)) {
+  case examples {
+    [] -> Ok(list.reverse(acc))
+    [example, ..rest] -> {
+      let report_path =
+        "build/reports/verify-gui-" <> backend <> "-" <> example.name <> ".json"
+      let result = case backend {
+        "headless" -> native_playground.verify(example.name, report_path)
+        "gtk4" -> native_playground.verify_gtk(example.name, report_path)
+        "sdl3" -> native_playground.run_sdl3(example.name, report_path)
+        _ ->
+          Error([
+            diagnostic.error(
+              code: "unsupported_gui_backend",
+              path: "verify-gui",
+              line: 1,
+              column: 1,
+              span_start: 0,
+              span_end: 0,
+              message: "unsupported GUI backend: " <> backend,
+              help: "use --backend headless, gtk4, or sdl3",
+            ),
+          ])
+      }
+      case result {
+        Error(diagnostics) -> Error(diagnostics)
+        Ok(proof) -> verify_gui_loop(rest, backend, [proof, ..acc])
+      }
+    }
+  }
+}
+
+fn finish_playground_proof(
+  label: String,
+  proof: playground_core.PlaygroundProof,
+  report_path: String,
+) -> Nil {
+  io.println(
+    label
+    <> " "
+    <> proof.example
+    <> " status="
+    <> proof.status
+    <> " report="
+    <> report_path,
+  )
+  case proof.status {
+    "pass" -> Nil
+    _ -> os.exit(1)
   }
 }
 

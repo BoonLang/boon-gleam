@@ -11,6 +11,7 @@ import gleam/list
 import gleam/string
 import mist.{type Connection, type ResponseData}
 import playground/core
+import support/background_launch
 import support/file
 
 @external(erlang, "os", "cmd")
@@ -31,10 +32,17 @@ pub fn doctor_json() -> String {
     True -> "available"
     False -> "missing"
   }
+  let cosmic = case background_launch.available() {
+    True -> "available"
+    False -> "missing"
+  }
   "{\n"
   <> "  \"browser\": \"firefox\",\n"
   <> "  \"firefox\": \""
   <> firefox
+  <> "\",\n"
+  <> "  \"cosmic_background_launch\": \""
+  <> cosmic
   <> "\",\n"
   <> "  \"renderer\": \"canvas2d\",\n"
   <> "  \"runtime_origin\": \"generated-boon-gleam-core\"\n"
@@ -194,22 +202,21 @@ fn html_escape(value: String) -> String {
 }
 
 fn firefox_smoke(screenshot_path: String) -> List(String) {
-  let output =
-    os_cmd(charlist.from_string(
-      "sh -c 'timeout 25s firefox --headless --profile \"$PWD/build/cache/firefox-profile\" --screenshot \"$PWD/"
-      <> screenshot_path
-      <> "\" \"file://$PWD/build/playgrounds/browser-verify/index.html\" >/tmp/boon-gleam-firefox-smoke.log 2>&1; echo EXIT:$?'",
-    ))
-    |> charlist.to_string
-  case string.contains(output, "EXIT:0"), file.is_file(screenshot_path) {
+  let command =
+    "timeout 25s firefox --headless --profile \"$PWD/build/cache/firefox-profile\" --screenshot \"$PWD/"
+    <> screenshot_path
+    <> "\" \"file://$PWD/build/playgrounds/browser-verify/index.html\" >/tmp/boon-gleam-firefox-smoke.log 2>&1"
+  case
+    background_launch.run_and_wait("browser-firefox-smoke", command, 30),
+    file.is_file(screenshot_path)
+  {
     True, True ->
       case file.file_size(screenshot_path) > 0 {
         True -> []
         False -> ["Firefox screenshot was created but empty"]
       }
     _, _ -> [
-      "Firefox headless smoke did not produce a screenshot; output="
-      <> string.trim(output),
+      "Firefox headless smoke did not produce a screenshot through cosmic-background-launch",
     ]
   }
 }

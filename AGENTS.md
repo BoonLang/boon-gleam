@@ -8,6 +8,7 @@ this repo. Keep changes and verification aligned with that file.
 When launching manual GUI playgrounds, browsers, editors, or other windows from
 Codex, prefer `cosmic-background-launch` so the new window is routed away from
 the user’s active workspace and does not steal focus.
+Use it for verifier and test helper windows too, not only manual commands.
 
 Use the helper around the actual command that creates the window:
 
@@ -22,6 +23,11 @@ window-creating phase:
 ```sh
 cosmic-background-launch --workspace codex -- gleam run -m boongleam -- gui --example counter
 ```
+
+Verifier/test commands that create windows must also go through the helper. The
+repo code should wrap the actual Firefox/native GUI process and then wait for a
+status artifact from that launched process, because `cosmic-background-launch`
+returns as soon as the background launch is registered.
 
 Why this matters:
 

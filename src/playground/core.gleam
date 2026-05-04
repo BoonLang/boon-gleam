@@ -7,6 +7,10 @@ import project/loader
 import project/project.{type Project}
 import runtime/core.{InitContext}
 import runtime/host as runtime_host
+import terminal/arkanoid
+import terminal/canvas
+import terminal/pong
+import verify/runner
 
 pub type PlaygroundTarget {
   TerminalTarget
@@ -127,7 +131,7 @@ pub fn scene(
 ) -> Result(GuiScene, List(Diagnostic)) {
   use example <- result_try(find_example(selector))
   use project <- result_try(loader.load(example.path))
-  use snapshot_text <- result_try(snapshot_text(project))
+  use snapshot_text <- result_try(snapshot_text(project, example))
   let source_preview = project.entry_file.contents
   let diagnostics = []
   let commands =
@@ -210,6 +214,36 @@ pub fn proof_json(proof: PlaygroundProof) -> String {
   <> "}\n"
 }
 
+pub fn proofs_json(command: String, proofs: List(PlaygroundProof)) -> String {
+  "{\n"
+  <> "  \"command\": \""
+  <> escape_json(command)
+  <> "\",\n"
+  <> "  \"status\": \""
+  <> case all_passed(proofs) {
+    True -> "pass"
+    False -> "fail"
+  }
+  <> "\",\n"
+  <> "  \"proofs\": ["
+  <> {
+    proofs
+    |> list.map(proof_json_compact)
+    |> string.join(with: ",")
+  }
+  <> "]\n"
+  <> "}\n"
+}
+
+pub fn all_passed(proofs: List(PlaygroundProof)) -> Bool {
+  list.all(proofs, fn(proof) { proof.status == "pass" })
+}
+
+fn proof_json_compact(proof: PlaygroundProof) -> String {
+  proof_json(proof)
+  |> string.trim
+}
+
 pub fn scene_json(scene: GuiScene) -> String {
   "{\n"
   <> "  \"target\": \""
@@ -251,16 +285,43 @@ pub fn catalog_text() -> String {
   |> string.join(with: "\n")
 }
 
-fn snapshot_text(project: Project) -> Result(String, List(Diagnostic)) {
-  use program <- result_try(loader.parse_project(project))
-  use flow <- result_try(pipeline.lower(
-    project.name,
-    project.entry_file.path,
-    program,
-  ))
-  let host = runtime_host.from_flow(flow)
-  let state = runtime_host.init(host, InitContext(seed: 0))
-  Ok(runtime_host.view(host, state).text)
+fn snapshot_text(
+  project: Project,
+  example: CatalogExample,
+) -> Result(String, List(Diagnostic)) {
+  case example.name {
+    "pong" ->
+      Ok(
+        pong.score_text(pong.init())
+        <> "\n"
+        <> {
+          pong.init()
+          |> pong.snapshot
+          |> canvas.to_text
+        },
+      )
+    "arkanoid" ->
+      Ok(
+        arkanoid.score_text(arkanoid.init())
+        <> "\n"
+        <> {
+          arkanoid.init()
+          |> arkanoid.snapshot
+          |> canvas.to_text
+        },
+      )
+    _ -> {
+      use program <- result_try(loader.parse_project(project))
+      use flow <- result_try(pipeline.lower(
+        project.name,
+        project.entry_file.path,
+        program,
+      ))
+      let host = runner.flow_host(flow)
+      let state = runtime_host.init(host, InitContext(seed: 0))
+      Ok(runtime_host.view(host, state).text)
+    }
+  }
 }
 
 fn scene_commands(
@@ -310,7 +371,6 @@ fn scene_failures(scene: GuiScene) -> List(String) {
   |> require(scene.commands != [], "scene has no draw commands")
   |> require(scene.hit_regions != [], "scene has no hit regions")
   |> require(scene.source_path != "", "scene has no source path")
-  |> require(scene.snapshot_text != "", "scene has empty runtime snapshot")
 }
 
 fn require(

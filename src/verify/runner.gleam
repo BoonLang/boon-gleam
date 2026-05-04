@@ -736,7 +736,7 @@ fn expected_action_to_event(action: ExpectedAction) -> Result(Event, Nil) {
   }
 }
 
-fn flow_host(flow: FlowProgram) -> BoonGleamRuntimeHost {
+pub fn flow_host(flow: FlowProgram) -> BoonGleamRuntimeHost {
   BoonGleamRuntimeHost(
     AppCore(
       init: fn(_) { initial_state(flow) },

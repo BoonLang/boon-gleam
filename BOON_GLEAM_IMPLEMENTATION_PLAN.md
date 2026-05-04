@@ -25,6 +25,7 @@ terminal_tui_beam
 durable_backend_beam
 web_frontend_js
 native_gui_sdl3
+native_gui_gtk4
 browser_gui_canvas2d
 ```
 
@@ -54,9 +55,11 @@ event log. Unsupported features must fail with named diagnostics.
 `boon-gleam` targets typed, distributed, durable, full-stack reactive Boon on
 Gleam. The first complete track is terminal and BEAM backend behavior. The
 manual playground contract now has three first-class surfaces: terminal, native
-SDL3 GUI, and browser Canvas2D GUI. All three must consume the same generated
-Boon/Gleam runtime behavior through a shared renderer-neutral scene and input
-contract.
+GUI, and browser Canvas2D GUI. GTK4 is the current native GUI backend because it
+is available on the target machine; SDL3 remains an explicit backend target that
+must fail honestly until repo-local SDL3 dependencies and bridge are present.
+All three must consume the same generated Boon/Gleam runtime behavior through a
+shared renderer-neutral scene and input contract.
 
 In scope:
 
@@ -67,7 +70,8 @@ supervised runtime processes
 durable event logs and snapshots
 terminal playground
 renderer-neutral GUI scene contract
-native SDL3 GUI playground shell
+native GTK4 GUI playground shell
+native SDL3 GUI playground shell when repo-local SDL3 is bootstrapped
 browser Canvas2D GUI playground shell
 playable terminal Pong in v0
 playable terminal Arkanoid in v1
@@ -81,6 +85,7 @@ Out of scope:
 Raybox
 Sokol
 SDL outside the narrow native playground shell
+GTK outside the narrow native playground shell
 raylib
 WebGPU
 WGSL
@@ -391,10 +396,11 @@ verify-durability EXAMPLE_PATH --store local|postgres [--report PATH]
 tui
   Launch terminal playground catalog, or show one example with --example NAME.
 
-gui [--doctor|--bootstrap|--example NAME|--backend headless|sdl3] [--report PATH]
-  Launch or verify the native SDL3 GUI playground. Headless verification must
-  consume the same GuiScene contract. SDL3 mode must fail honestly when the
-  repo-local SDL3 bridge is unavailable.
+gui [--doctor|--bootstrap|--example NAME|--backend headless|gtk4|sdl3] [--report PATH]
+  Launch or verify the native GUI playground. Headless verification must
+  consume the same GuiScene contract. GTK4 is the current real native window
+  backend. SDL3 mode must fail honestly when the repo-local SDL3 bridge is
+  unavailable.
 
 browser [--doctor|--serve|--example NAME|--out PATH|--port N]
   Build or serve the browser GUI playground bundle. The browser shell uses
@@ -403,7 +409,7 @@ browser [--doctor|--serve|--example NAME|--out PATH|--port N]
 verify-playgrounds [--all|--example NAME] [--report PATH]
   Run shared terminal/browser/headless playground scene gates.
 
-verify-gui [--all|--example NAME] --backend headless|sdl3 [--report PATH]
+verify-gui [--all|--example NAME] --backend headless|gtk4|sdl3 [--report PATH]
   Verify native GUI playground reports. The sdl3 backend must prove the real
   native shell or fail with a dependency/bridge diagnostic.
 
@@ -1838,9 +1844,9 @@ Use this prompt when asking Codex to create or continue the repository:
 Implement boon-gleam from BOON_GLEAM_IMPLEMENTATION_PLAN.md.
 
 Do not add Zig, Rust, Pony, Raybox, Sokol, WebGPU, Slang, webview-only native
-playgrounds, or a custom Wasm runtime. SDL3 is allowed only for the native GUI
-playground shell defined in this plan. Gleam JS + Lustre and Canvas2D are
-allowed only for the browser target defined in this plan.
+playgrounds, or a custom Wasm runtime. GTK4 and SDL3 are allowed only for the
+native GUI playground shell defined in this plan. Gleam JS + Lustre and Canvas2D
+are allowed only for the browser target defined in this plan.
 
 Start with Phase 0, then proceed phase by phase. Do not skip a phase acceptance
 gate. Keep all targets going through the same generated init/update/view core.
