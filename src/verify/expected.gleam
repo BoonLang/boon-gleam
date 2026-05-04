@@ -23,26 +23,43 @@ pub type ExpectedStep {
 }
 
 pub type ExpectedAction {
+  AssertButtonDisabled(Int)
+  AssertButtonEnabled(Int)
   AssertButtonHasOutline(String)
+  AssertCellsCellText(Int, Int, String)
+  AssertCellsRowVisible(Int)
   AssertCheckboxChecked(Int)
   AssertCheckboxCount(Int)
+  AssertCheckboxUnchecked(Int)
   AssertContains(String)
   AssertFocused(Int)
+  AssertFocusedInputValue(String)
   AssertInputEmpty(Int)
+  AssertInputNotTypeable(Int)
   AssertInputPlaceholder(Int, String)
   AssertInputTypeable(Int)
+  AssertInputValue(Int, String)
   AssertNotContains(String)
+  AssertNotFocused
+  AssertToggleAllDarker
+  AssertUrl(String)
   ClickButton(Int)
   ClickButtonNearText(String, String)
   ClickCheckbox(Int)
   ClickCheckboxNearText(String)
   ClickText(String)
   ClearStates
+  DblClickCellsCell(Int, Int)
   DblClickText(String)
+  DblClickTextNth(String, Int)
   FocusInput(Int)
   HoverText(String)
   KeyPress(String)
   Run
+  SelectOption(Int, String)
+  SetFocusedInputValue(String)
+  SetInputValue(Int, String)
+  SetSliderValue(Int, String)
   TypeText(String)
   Wait(Int)
 }
@@ -83,25 +100,9 @@ pub fn expected_path(example_path: String) -> String {
 
 fn parse(path: String, contents: String) -> Result(Expected, List(Diagnostic)) {
   let lines = string.split(contents, on: "\n")
-  case parse_output_text(lines, False) {
-    Ok(text) -> {
-      use steps <- result_try(parse_steps(path, lines))
-      Ok(Expected(text: text, steps: steps))
-    }
-    Error(_) ->
-      Error([
-        error(
-          code: "expected_output_missing",
-          path: path,
-          line: 1,
-          column: 1,
-          span_start: 0,
-          span_end: 0,
-          message: "expected file does not contain `[output] text = ...`",
-          help: "Phase 2 verifies semantic snapshot text",
-        ),
-      ])
-  }
+  use steps <- result_try(parse_steps(path, lines))
+  let initial_text = result.unwrap(parse_output_text(lines, False), "")
+  Ok(Expected(text: initial_text, steps: steps))
 }
 
 fn parse_output_text(
@@ -165,7 +166,15 @@ fn parse_step_lines(
               "unterminated expected action array",
             ),
           ])
-        False -> Ok(list.reverse(steps))
+        False ->
+          Ok(
+            list.reverse(push_pending_step(
+              step_kind,
+              pending_actions,
+              steps,
+              "",
+            )),
+          )
       }
     [line, ..rest] -> {
       let trimmed = string.trim(line)
@@ -227,10 +236,10 @@ fn parse_step_lines(
                     rest,
                     line_number + 1,
                     next_kind,
-                    pending_actions,
+                    [],
                     [],
                     False,
-                    steps,
+                    push_pending_step(step_kind, pending_actions, steps, ""),
                   )
                 Error(_) ->
                   case string.starts_with(trimmed, "actions = ") {
@@ -310,6 +319,25 @@ fn parse_step_lines(
   }
 }
 
+fn push_pending_step(
+  step_kind: ExpectedStepKind,
+  pending_actions: List(ExpectedAction),
+  steps: List(ExpectedStep),
+  expect: String,
+) -> List(ExpectedStep) {
+  case pending_actions {
+    [] -> steps
+    _ -> [
+      ExpectedStep(
+        kind: step_kind,
+        actions: list.reverse(pending_actions),
+        expect: expect,
+      ),
+      ..steps
+    ]
+  }
+}
+
 fn parse_step_section(line: String) -> Result(ExpectedStepKind, Nil) {
   case line {
     "[[sequence]]" -> Ok(SequenceStep)
@@ -330,62 +358,108 @@ fn parse_action(line: String) -> Result(ExpectedAction, Nil) {
 }
 
 fn parse_uncommented_action(line: String) -> Result(ExpectedAction, Nil) {
-  case string.contains(line, "\"assert_button_has_outline\"") {
-    True -> Ok(AssertButtonHasOutline(first_string_arg(line)))
+  case string.contains(line, "\"assert_button_disabled\"") {
+    True -> Ok(AssertButtonDisabled(first_int_arg(line)))
     False ->
-      case string.contains(line, "\"assert_checkbox_checked\"") {
-        True -> Ok(AssertCheckboxChecked(first_int_arg(line)))
+      case string.contains(line, "\"assert_button_enabled\"") {
+        True -> Ok(AssertButtonEnabled(first_int_arg(line)))
         False ->
-          case string.contains(line, "\"assert_checkbox_count\"") {
-            True -> Ok(AssertCheckboxCount(first_int_arg(line)))
+          case string.contains(line, "\"assert_button_has_outline\"") {
+            True -> Ok(AssertButtonHasOutline(first_string_arg(line)))
             False ->
-              case string.contains(line, "\"assert_contains\"") {
-                True -> Ok(AssertContains(first_string_arg(line)))
+              case string.contains(line, "\"assert_cells_cell_text\"") {
+                True ->
+                  Ok(AssertCellsCellText(
+                    first_int_arg(line),
+                    second_int_arg(line),
+                    first_string_arg(line),
+                  ))
                 False ->
-                  case string.contains(line, "\"assert_focused\"") {
-                    True -> Ok(AssertFocused(first_int_arg(line)))
+                  case string.contains(line, "\"assert_cells_row_visible\"") {
+                    True -> Ok(AssertCellsRowVisible(first_int_arg(line)))
+                    False -> parse_checkbox_assertion(line)
+                  }
+              }
+          }
+      }
+  }
+}
+
+fn parse_checkbox_assertion(line: String) -> Result(ExpectedAction, Nil) {
+  case string.contains(line, "\"assert_checkbox_checked\"") {
+    True -> Ok(AssertCheckboxChecked(first_int_arg(line)))
+    False ->
+      case string.contains(line, "\"assert_checkbox_count\"") {
+        True -> Ok(AssertCheckboxCount(first_int_arg(line)))
+        False ->
+          case string.contains(line, "\"assert_checkbox_unchecked\"") {
+            True -> Ok(AssertCheckboxUnchecked(first_int_arg(line)))
+            False -> parse_text_assertion(line)
+          }
+      }
+  }
+}
+
+fn parse_text_assertion(line: String) -> Result(ExpectedAction, Nil) {
+  case string.contains(line, "\"assert_contains\"") {
+    True -> Ok(AssertContains(first_string_arg(line)))
+    False ->
+      case string.contains(line, "\"assert_focused_input_value\"") {
+        True -> Ok(AssertFocusedInputValue(first_string_arg(line)))
+        False ->
+          case string.contains(line, "\"assert_focused\"") {
+            True -> Ok(AssertFocused(first_int_arg(line)))
+            False -> parse_input_assertion(line)
+          }
+      }
+  }
+}
+
+fn parse_input_assertion(line: String) -> Result(ExpectedAction, Nil) {
+  case string.contains(line, "\"assert_input_empty\"") {
+    True -> Ok(AssertInputEmpty(first_int_arg(line)))
+    False ->
+      case string.contains(line, "\"assert_input_not_typeable\"") {
+        True -> Ok(AssertInputNotTypeable(first_int_arg(line)))
+        False ->
+          case string.contains(line, "\"assert_input_placeholder\"") {
+            True ->
+              Ok(AssertInputPlaceholder(
+                first_int_arg(line),
+                first_string_arg(line),
+              ))
+            False ->
+              case string.contains(line, "\"assert_input_typeable\"") {
+                True -> Ok(AssertInputTypeable(first_int_arg(line)))
+                False ->
+                  case string.contains(line, "\"assert_input_value\"") {
+                    True ->
+                      Ok(AssertInputValue(
+                        first_int_arg(line),
+                        first_string_arg(line),
+                      ))
                     False ->
-                      case string.contains(line, "\"assert_input_empty\"") {
-                        True -> Ok(AssertInputEmpty(first_int_arg(line)))
-                        False ->
-                          case
-                            string.contains(
-                              line,
-                              "\"assert_input_placeholder\"",
-                            )
-                          {
-                            True ->
-                              Ok(AssertInputPlaceholder(
-                                first_int_arg(line),
-                                first_string_arg(line),
-                              ))
-                            False ->
-                              case
-                                string.contains(
-                                  line,
-                                  "\"assert_input_typeable\"",
-                                )
-                              {
-                                True ->
-                                  Ok(AssertInputTypeable(first_int_arg(line)))
-                                False ->
-                                  case
-                                    string.contains(
-                                      line,
-                                      "\"assert_not_contains\"",
-                                    )
-                                  {
-                                    True ->
-                                      Ok(
-                                        AssertNotContains(first_string_arg(line)),
-                                      )
-                                    False -> parse_non_assert_action(line)
-                                  }
-                              }
-                          }
+                      case string.contains(line, "\"assert_not_contains\"") {
+                        True -> Ok(AssertNotContains(first_string_arg(line)))
+                        False -> parse_misc_assertion(line)
                       }
                   }
               }
+          }
+      }
+  }
+}
+
+fn parse_misc_assertion(line: String) -> Result(ExpectedAction, Nil) {
+  case string.contains(line, "\"assert_not_focused\"") {
+    True -> Ok(AssertNotFocused)
+    False ->
+      case string.contains(line, "\"assert_toggle_all_darker\"") {
+        True -> Ok(AssertToggleAllDarker)
+        False ->
+          case string.contains(line, "\"assert_url\"") {
+            True -> Ok(AssertUrl(first_string_arg(line)))
+            False -> parse_non_assert_action(line)
           }
       }
   }
@@ -409,36 +483,58 @@ fn parse_click_action(line: String) -> Result(ExpectedAction, Nil) {
     string.contains(line, "\"click_checkbox_near_text\""),
     string.contains(line, "\"click_checkbox\""),
     string.contains(line, "\"click_text\""),
+    string.contains(line, "\"dblclick_cells_cell\""),
+    string.contains(line, "\"dblclick_text_nth\""),
     string.contains(line, "\"dblclick_text\"")
   {
-    True, _, _, _, _, _ ->
+    True, _, _, _, _, _, _, _ ->
       Ok(ClickButtonNearText(first_string_arg(line), second_string_arg(line)))
-    _, True, _, _, _, _ -> Ok(ClickButton(first_int_arg(line)))
-    _, _, True, _, _, _ -> Ok(ClickCheckboxNearText(first_string_arg(line)))
-    _, _, _, True, _, _ -> Ok(ClickCheckbox(first_int_arg(line)))
-    _, _, _, _, True, _ -> Ok(ClickText(first_string_arg(line)))
-    _, _, _, _, _, True -> Ok(DblClickText(first_string_arg(line)))
-    _, _, _, _, _, _ -> parse_misc_action(line)
+    _, True, _, _, _, _, _, _ -> Ok(ClickButton(first_int_arg(line)))
+    _, _, True, _, _, _, _, _ ->
+      Ok(ClickCheckboxNearText(first_string_arg(line)))
+    _, _, _, True, _, _, _, _ -> Ok(ClickCheckbox(first_int_arg(line)))
+    _, _, _, _, True, _, _, _ -> Ok(ClickText(first_string_arg(line)))
+    _, _, _, _, _, True, _, _ ->
+      Ok(DblClickCellsCell(first_int_arg(line), second_int_arg(line)))
+    _, _, _, _, _, _, True, _ ->
+      Ok(DblClickTextNth(first_string_arg(line), first_int_arg(line)))
+    _, _, _, _, _, _, _, True -> Ok(DblClickText(first_string_arg(line)))
+    _, _, _, _, _, _, _, _ -> parse_misc_action(line)
   }
 }
 
 fn parse_misc_action(line: String) -> Result(ExpectedAction, Nil) {
-  case string.contains(line, "\"clear_states\"") {
-    True -> Ok(ClearStates)
+  case
+    string.contains(line, "\"clear_states\""),
+    string.contains(line, "\"focus_input\""),
+    string.contains(line, "\"hover_text\""),
+    string.contains(line, "\"run\""),
+    string.contains(line, "\"wait\"")
+  {
+    True, _, _, _, _ -> Ok(ClearStates)
+    _, True, _, _, _ -> Ok(FocusInput(first_int_arg(line)))
+    _, _, True, _, _ -> Ok(HoverText(first_string_arg(line)))
+    _, _, _, True, _ -> Ok(Run)
+    _, _, _, _, True -> Ok(Wait(first_int_arg(line)))
+    _, _, _, _, _ -> parse_set_action(line)
+  }
+}
+
+fn parse_set_action(line: String) -> Result(ExpectedAction, Nil) {
+  case string.contains(line, "\"select_option\"") {
+    True -> Ok(SelectOption(first_int_arg(line), first_string_arg(line)))
     False ->
-      case string.contains(line, "\"focus_input\"") {
-        True -> Ok(FocusInput(first_int_arg(line)))
+      case string.contains(line, "\"set_focused_input_value\"") {
+        True -> Ok(SetFocusedInputValue(first_string_arg(line)))
         False ->
-          case string.contains(line, "\"hover_text\"") {
-            True -> Ok(HoverText(first_string_arg(line)))
+          case string.contains(line, "\"set_input_value\"") {
+            True ->
+              Ok(SetInputValue(first_int_arg(line), first_string_arg(line)))
             False ->
-              case string.contains(line, "\"run\"") {
-                True -> Ok(Run)
-                False ->
-                  case string.contains(line, "\"wait\"") {
-                    True -> Ok(Wait(first_int_arg(line)))
-                    False -> Error(Nil)
-                  }
+              case string.contains(line, "\"set_slider_value\"") {
+                True ->
+                  Ok(SetSliderValue(first_int_arg(line), first_string_arg(line)))
+                False -> Error(Nil)
               }
           }
       }
@@ -564,6 +660,10 @@ fn expected_parse_error(
 
 fn first_int_arg(line: String) -> Int {
   int_arg(line, 0)
+}
+
+fn second_int_arg(line: String) -> Int {
+  int_arg(line, 1)
 }
 
 fn int_arg(line: String, index: Int) -> Int {

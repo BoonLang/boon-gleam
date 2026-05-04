@@ -25,6 +25,12 @@ fn erlang_ensure_dir(path: Charlist) -> atom.Atom
 @external(erlang, "filelib", "is_dir")
 fn erlang_is_dir(path: Charlist) -> Bool
 
+@external(erlang, "filelib", "is_file")
+fn erlang_is_file(path: Charlist) -> Bool
+
+@external(erlang, "filelib", "file_size")
+fn erlang_file_size(path: Charlist) -> Int
+
 pub fn read_text_file(path: String) -> Result(String, String) {
   case erlang_read_file(charlist.from_string(path)) {
     Ok(contents) ->
@@ -65,6 +71,14 @@ pub fn make_dir_all(path: String) -> Result(Nil, String) {
 
 pub fn is_directory(path: String) -> Bool {
   erlang_is_dir(charlist.from_string(path))
+}
+
+pub fn is_file(path: String) -> Bool {
+  erlang_is_file(charlist.from_string(path))
+}
+
+pub fn file_size(path: String) -> Int {
+  erlang_file_size(charlist.from_string(path))
 }
 
 pub fn list_files_recursive(path: String) -> Result(List(String), String) {

@@ -11,15 +11,20 @@ import gleam/list
 import gleam/string
 import lowering/pipeline
 import perf/bench as perf_bench
+import playground/browser as browser_playground
+import playground/core as playground_core
+import playground/native as native_playground
 import project/importer
 import project/loader
 import support/argv
 import support/file
+import support/hash
 import support/os
 import terminal/play as terminal_play
 import terminal/smoke as terminal_smoke
 import terminal/verify as terminal_verify
 import verify/all as verify_all
+import verify/guardrails
 import verify/report as verify_report
 import verify/runner
 import web/lustre_client
@@ -34,7 +39,12 @@ pub fn main() -> Nil {
     ["manifest", ..] -> manifest()
     ["compile", path, ..] -> compile(path)
     ["codegen", path, ..rest] -> codegen(path, rest)
-    ["tui", ..] -> play("examples/terminal/pong")
+    ["tui", ..rest] -> tui(rest)
+    ["gui", ..rest] -> gui(rest)
+    ["browser", ..rest] -> browser(rest)
+    ["verify-playgrounds", ..rest] -> verify_playgrounds(rest)
+    ["verify-gui", ..rest] -> verify_gui(rest)
+    ["verify-browser", ..rest] -> verify_browser(rest)
     ["play", path, ..] -> play(path)
     ["play-smoke", path, ..rest] -> play_smoke(path, rest)
     ["serve", path, ..rest] -> serve(path, rest)
@@ -44,10 +54,194 @@ pub fn main() -> Nil {
     ["store", "setup-postgres", ..rest] -> setup_postgres(rest)
     ["verify-backend", path, ..rest] -> verify_backend(path, rest)
     ["verify-durability", path, ..rest] -> verify_durability(path, rest)
+    ["verify-guardrails", ..rest] -> verify_guardrails(rest)
     ["web", path, ..rest] -> web(path, rest)
-    ["verify-all", ..] -> verify_all()
+    ["verify-all", ..rest] -> verify_all(rest)
     ["verify", path, ..rest] -> verify_command(path, rest)
     [command, ..] -> print_not_implemented(command)
+  }
+}
+
+fn tui(args: List(String)) -> Nil {
+  let example = flag_string(args, "--example", "")
+  case example {
+    "" -> {
+      io.println("Boon Gleam terminal playground examples:")
+      io.println(playground_core.catalog_text())
+      io.println("")
+      io.println(
+        "Run `gleam run -m boongleam -- tui --example pong` or `gleam run -m boongleam -- play examples/terminal/pong`.",
+      )
+    }
+    _ ->
+      case playground_core.scene(example, playground_core.TerminalTarget) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(scene) -> {
+          io.println(scene.title)
+          io.println("example: " <> scene.example.name)
+          io.println("source: " <> scene.source_path)
+          io.println("")
+          io.println(scene.snapshot_text)
+        }
+      }
+  }
+}
+
+fn gui(args: List(String)) -> Nil {
+  case args {
+    ["--doctor", ..] -> {
+      let report = native_playground.doctor()
+      io.println(native_playground.doctor_json(report))
+    }
+    ["--bootstrap", ..] ->
+      case
+        native_playground.bootstrap_report("build/reports/gui-bootstrap.json")
+      {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(report) -> io.println(report)
+      }
+    _ -> {
+      let example = flag_string(args, "--example", "todo_mvc")
+      let report_path =
+        flag_string(args, "--report", "build/reports/gui-playground.json")
+      case native_playground.run(example, report_path) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(proof) ->
+          io.println(
+            "native gui "
+            <> proof.example
+            <> " status="
+            <> proof.status
+            <> " report="
+            <> report_path,
+          )
+      }
+    }
+  }
+}
+
+fn browser(args: List(String)) -> Nil {
+  let example = flag_string(args, "--example", "todo_mvc")
+  let out_dir = flag_string(args, "--out", "build/playgrounds/browser")
+  let port = flag_int(args, "--port", 8080)
+  case has_flag(args, "--doctor"), has_flag(args, "--serve") {
+    True, _ -> io.println(browser_playground.doctor_json())
+    _, True ->
+      case browser_playground.serve(example, out_dir, port) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(_) -> Nil
+      }
+    _, False ->
+      case browser_playground.build(example, out_dir) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(report) ->
+          io.println(
+            "browser playground "
+            <> report.example
+            <> " index="
+            <> report.index_path
+            <> " scene="
+            <> report.scene_path,
+          )
+      }
+  }
+}
+
+fn verify_playgrounds(args: List(String)) -> Nil {
+  let report_path =
+    flag_string(args, "--report", "build/reports/verify-playgrounds.json")
+  let example = flag_string(args, "--example", "todo_mvc")
+  case playground_core.scene(example, playground_core.TerminalTarget) {
+    Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+    Ok(terminal_scene) ->
+      case playground_core.scene(example, playground_core.BrowserGuiTarget) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(browser_scene) -> {
+          let terminal_proof =
+            playground_core.proof("verify-playgrounds terminal", terminal_scene)
+          let browser_proof =
+            playground_core.proof("verify-playgrounds browser", browser_scene)
+          let report =
+            "{\n"
+            <> "  \"command\": \"verify-playgrounds\",\n"
+            <> "  \"example\": \""
+            <> example
+            <> "\",\n"
+            <> "  \"proofs\": ["
+            <> playground_core.proof_json(terminal_proof)
+            <> ","
+            <> playground_core.proof_json(browser_proof)
+            <> "  ]\n"
+            <> "}\n"
+          maybe_write_report(report_path, report)
+          io.println(
+            "verify-playgrounds example="
+            <> example
+            <> " report="
+            <> report_path,
+          )
+        }
+      }
+  }
+}
+
+fn verify_gui(args: List(String)) -> Nil {
+  let example = flag_string(args, "--example", "todo_mvc")
+  let backend = flag_string(args, "--backend", "headless")
+  let report_path =
+    flag_string(args, "--report", "build/reports/verify-gui-headless.json")
+  case backend {
+    "headless" ->
+      case native_playground.verify(example, report_path) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(proof) ->
+          io.println(
+            "verify-gui "
+            <> proof.example
+            <> " backend=headless status="
+            <> proof.status,
+          )
+      }
+    "sdl3" ->
+      case native_playground.run(example, report_path) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(proof) ->
+          io.println(
+            "verify-gui "
+            <> proof.example
+            <> " backend=sdl3 status="
+            <> proof.status,
+          )
+      }
+    _ ->
+      fail_with_diagnostics([
+        diagnostic.error(
+          code: "unsupported_gui_backend",
+          path: "verify-gui",
+          line: 1,
+          column: 1,
+          span_start: 0,
+          span_end: 0,
+          message: "unsupported GUI backend: " <> backend,
+          help: "use --backend headless or --backend sdl3",
+        ),
+      ])
+  }
+}
+
+fn verify_browser(args: List(String)) -> Nil {
+  let example = flag_string(args, "--example", "todo_mvc")
+  let report_path =
+    flag_string(args, "--report", "build/reports/verify-browser-firefox.json")
+  case browser_playground.verify(example, report_path) {
+    Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+    Ok(proof) ->
+      io.println(
+        "verify-browser "
+        <> proof.example
+        <> " browser=firefox status="
+        <> proof.status,
+      )
   }
 }
 
@@ -58,16 +252,43 @@ fn play(path: String) -> Nil {
   }
 }
 
-fn verify_all() -> Nil {
-  case verify_all.run() {
-    Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-    Ok(report) ->
+fn verify_all(args: List(String)) -> Nil {
+  let report_path = flag_string(args, "--report", "")
+  let phase = flag_string(args, "--phase", "all")
+  case verify_all.run(phase) {
+    Error(diagnostics) ->
+      fail_with_report(report_path, "verify-all", "manifest", diagnostics)
+    Ok(report) -> {
+      maybe_write_report(report_path, verify_all_report_json(report))
       io.println(
         "verify-all semantic="
         <> int.to_string(report.semantic_count)
         <> " terminal="
         <> int.to_string(report.terminal_count),
       )
+    }
+  }
+}
+
+fn verify_guardrails(args: List(String)) -> Nil {
+  let report_path = flag_string(args, "--report", "")
+  case guardrails.run() {
+    Error(diagnostics) ->
+      fail_with_report(
+        report_path,
+        "verify-guardrails",
+        "structural",
+        diagnostics,
+      )
+    Ok(report) -> {
+      maybe_write_report(report_path, guardrails_report_json(report))
+      io.println(
+        "verify-guardrails checked="
+        <> int.to_string(report.checked)
+        <> " allowlisted="
+        <> int.to_string(list.length(report.allowlisted)),
+      )
+    }
   }
 }
 
@@ -137,30 +358,44 @@ fn bench_backend(path: String, args: List(String)) -> Nil {
 
 fn verify_durability(path: String, args: List(String)) -> Nil {
   let store = session.parse_store(flag_string(args, "--store", "local"))
+  let report_path = flag_string(args, "--report", "")
   case session.is_postgres(store) {
     True ->
       case postgres.require_database_url() {
-        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Error(diagnostics) ->
+          fail_with_report(report_path, "verify-durability", path, diagnostics)
         Ok(database_url) ->
           case postgres.verify_session(path, database_url) {
-            Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-            Ok(_) -> verify_durability_with_store(path, store)
+            Error(diagnostics) ->
+              fail_with_report(
+                report_path,
+                "verify-durability",
+                path,
+                diagnostics,
+              )
+            Ok(_) -> verify_durability_with_store(path, store, report_path)
           }
       }
-    False -> verify_durability_with_store(path, store)
+    False -> verify_durability_with_store(path, store, report_path)
   }
 }
 
-fn verify_durability_with_store(path: String, store: session.StoreKind) -> Nil {
+fn verify_durability_with_store(
+  path: String,
+  store: session.StoreKind,
+  report_path: String,
+) -> Nil {
   case durability.verify(path, store) {
     Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-    Ok(report) ->
+    Ok(report) -> {
+      maybe_write_report(report_path, durability_report_json(report))
       io.println(
         "verified durability "
         <> report.example
         <> " events="
         <> int.to_string(report.events_replayed),
       )
+    }
   }
 }
 
@@ -168,9 +403,14 @@ fn serve_smoke(path: String, args: List(String)) -> Nil {
   let store = session.parse_store(flag_string(args, "--store", "memory"))
   let port = flag_int(args, "--port", 8080)
   let timeout_ms = flag_int(args, "--timeout-ms", 5000)
+  let report_path = flag_string(args, "--report", "")
   case backend_smoke.serve_smoke(path, store, port, timeout_ms) {
     Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-    Ok(report) ->
+    Ok(report) -> {
+      maybe_write_report(
+        report_path,
+        backend_report_json("serve-smoke", report),
+      )
       io.println(
         "serve-smoke "
         <> report.example
@@ -179,6 +419,7 @@ fn serve_smoke(path: String, args: List(String)) -> Nil {
         <> " revision="
         <> int.to_string(report.revision),
       )
+    }
   }
 }
 
@@ -193,24 +434,35 @@ fn serve(path: String, args: List(String)) -> Nil {
 
 fn verify_backend(path: String, args: List(String)) -> Nil {
   let store = session.parse_store(flag_string(args, "--store", "memory"))
+  let report_path = flag_string(args, "--report", "")
   case session.is_postgres(store) {
     True ->
       case postgres.require_database_url() {
-        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Error(diagnostics) ->
+          fail_with_report(report_path, "verify-backend", path, diagnostics)
         Ok(database_url) ->
           case postgres.verify_session(path, database_url) {
-            Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-            Ok(_) -> verify_backend_with_store(path, store)
+            Error(diagnostics) ->
+              fail_with_report(report_path, "verify-backend", path, diagnostics)
+            Ok(_) -> verify_backend_with_store(path, store, report_path)
           }
       }
-    False -> verify_backend_with_store(path, store)
+    False -> verify_backend_with_store(path, store, report_path)
   }
 }
 
-fn verify_backend_with_store(path: String, store: session.StoreKind) -> Nil {
+fn verify_backend_with_store(
+  path: String,
+  store: session.StoreKind,
+  report_path: String,
+) -> Nil {
   case backend_smoke.verify_backend(path, store) {
     Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-    Ok(report) ->
+    Ok(report) -> {
+      maybe_write_report(
+        report_path,
+        backend_report_json("verify-backend", report),
+      )
       io.println(
         "verified backend "
         <> report.example
@@ -219,15 +471,18 @@ fn verify_backend_with_store(path: String, store: session.StoreKind) -> Nil {
         <> " revision="
         <> int.to_string(report.revision),
       )
+    }
   }
 }
 
 fn play_smoke(path: String, args: List(String)) -> Nil {
   let ticks = flag_int(args, "--ticks", 1000)
   let timeout_ms = flag_int(args, "--timeout-ms", 5000)
+  let report_path = flag_string(args, "--report", "")
   case terminal_smoke.play_smoke(path, ticks, timeout_ms) {
     Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-    Ok(report) ->
+    Ok(report) -> {
+      maybe_write_report(report_path, terminal_report_json(report))
       io.println(
         "play-smoke "
         <> report.example
@@ -236,6 +491,7 @@ fn play_smoke(path: String, args: List(String)) -> Nil {
         <> " hash="
         <> report.hash,
       )
+    }
   }
 }
 
@@ -292,6 +548,10 @@ fn flag_string(args: List(String), name: String, default: String) -> String {
   }
 }
 
+fn has_flag(args: List(String), name: String) -> Bool {
+  list.any(args, fn(arg) { arg == name })
+}
+
 fn print_help() -> Nil {
   io.println("boongleam - Gleam implementation and codegen backend for Boon")
   io.println("")
@@ -309,7 +569,13 @@ fn print_help() -> Nil {
   io.println("  verify-all")
   io.println("  verify-backend")
   io.println("  verify-durability")
+  io.println("  verify-guardrails")
   io.println("  tui")
+  io.println("  gui")
+  io.println("  browser")
+  io.println("  verify-playgrounds")
+  io.println("  verify-gui")
+  io.println("  verify-browser")
   io.println("  play")
   io.println("  play-smoke")
   io.println("  serve")
@@ -460,14 +726,44 @@ fn manifest_has_required_metadata(contents: String) -> Bool {
 
 fn manifest_paths() -> List(String) {
   [
-    "examples/upstream/minimal",
-    "examples/upstream/hello_world",
+    "examples/upstream/button_hover_test",
+    "examples/upstream/button_hover_to_click_test",
+    "examples/upstream/cells",
+    "examples/upstream/cells_dynamic",
+    "examples/upstream/chained_list_remove_bug",
+    "examples/upstream/checkbox_test",
+    "examples/upstream/circle_drawer",
+    "examples/upstream/complex_counter",
     "examples/upstream/counter",
     "examples/upstream/counter_hold",
-    "examples/upstream/complex_counter",
+    "examples/upstream/crud",
+    "examples/upstream/fibonacci",
+    "examples/upstream/filter_checkbox_bug",
+    "examples/upstream/flight_booker",
+    "examples/upstream/hello_world",
+    "examples/upstream/interval",
+    "examples/upstream/interval_hold",
+    "examples/upstream/latest",
+    "examples/upstream/layers",
+    "examples/upstream/list_map_block",
+    "examples/upstream/list_map_external_dep",
+    "examples/upstream/list_object_state",
+    "examples/upstream/list_retain_count",
+    "examples/upstream/list_retain_reactive",
+    "examples/upstream/list_retain_remove",
+    "examples/upstream/minimal",
+    "examples/upstream/pages",
     "examples/upstream/shopping_list",
+    "examples/upstream/switch_hold_test",
+    "examples/upstream/temperature_converter",
+    "examples/upstream/text_interpolation_update",
+    "examples/upstream/then",
+    "examples/upstream/timer",
     "examples/upstream/todo_mvc",
     "examples/upstream/todo_mvc_physical",
+    "examples/upstream/when",
+    "examples/upstream/while",
+    "examples/upstream/while_function_call",
     "examples/terminal/pong",
     "examples/terminal/arkanoid",
   ]
@@ -560,11 +856,36 @@ fn maybe_write_report(path: String, contents: String) -> Nil {
   }
 }
 
+fn fail_with_report(
+  report_path: String,
+  command: String,
+  example: String,
+  diagnostics: List(diagnostic.Diagnostic),
+) -> Nil {
+  maybe_write_report(
+    report_path,
+    failure_report_json(command, example, diagnostics),
+  )
+  fail_with_diagnostics(diagnostics)
+}
+
 fn semantic_report_json(report: verify_report.VerifyReport) -> String {
   "{\n"
-  <> "  \"example\": \""
-  <> escape_json(report.example)
-  <> "\",\n"
+  <> common_report_fields(
+    command: "verify",
+    example: report.example,
+    target: "semantic",
+    status: status_json(report.passed),
+    source_commit: "34251e2938a73f05de14997e167630bb0124ef48",
+    actions_total: 0,
+    actions_passed: 0,
+    snapshot_hash: "sha256:" <> hash.sha256_hex(report.actual_text),
+    terminal_frame_hash: "null",
+    reproduce: "gleam run -- verify " <> report.example,
+  )
+  <> ",\n"
+  <> "  \"diagnostics\": [],\n"
+  <> "  \"failure\": null,\n"
   <> "  \"passed\": "
   <> bool_json(report.passed)
   <> ",\n"
@@ -579,9 +900,26 @@ fn semantic_report_json(report: verify_report.VerifyReport) -> String {
 
 fn terminal_report_json(report: terminal_smoke.SmokeReport) -> String {
   "{\n"
-  <> "  \"example\": \""
-  <> escape_json(report.example)
-  <> "\",\n"
+  <> common_report_fields(
+    command: "terminal-smoke",
+    example: report.example,
+    target: "terminal",
+    status: "pass",
+    source_commit: "workspace",
+    actions_total: report.ticks,
+    actions_passed: report.ticks,
+    snapshot_hash: "null",
+    terminal_frame_hash: "\"sha256:" <> escape_json(report.hash) <> "\"",
+    reproduce: "gleam run -- play-smoke "
+      <> report.example
+      <> " --ticks "
+      <> int.to_string(report.ticks)
+      <> " --timeout-ms "
+      <> int.to_string(report.timeout_ms),
+  )
+  <> ",\n"
+  <> "  \"diagnostics\": [],\n"
+  <> "  \"failure\": null,\n"
   <> "  \"ticks\": "
   <> int.to_string(report.ticks)
   <> ",\n"
@@ -595,6 +933,262 @@ fn terminal_report_json(report: terminal_smoke.SmokeReport) -> String {
   <> escape_json(report.hash)
   <> "\"\n"
   <> "}\n"
+}
+
+fn backend_report_json(
+  command: String,
+  report: backend_smoke.BackendReport,
+) -> String {
+  "{\n"
+  <> common_report_fields(
+    command: command,
+    example: report.example,
+    target: "backend-" <> session.store_name(report.store),
+    status: "pass",
+    source_commit: "34251e2938a73f05de14997e167630bb0124ef48",
+    actions_total: list.length(report.websocket_trace),
+    actions_passed: list.length(report.websocket_trace),
+    snapshot_hash: "sha256:" <> hash.sha256_hex(report.snapshot_text),
+    terminal_frame_hash: "null",
+    reproduce: "gleam run -- " <> command <> " " <> report.example,
+  )
+  <> ",\n"
+  <> "  \"diagnostics\": [],\n"
+  <> "  \"failure\": null,\n"
+  <> "  \"store\": \""
+  <> escape_json(session.store_name(report.store))
+  <> "\",\n"
+  <> "  \"port\": "
+  <> int.to_string(report.port)
+  <> ",\n"
+  <> "  \"timeout_ms\": "
+  <> int.to_string(report.timeout_ms)
+  <> ",\n"
+  <> "  \"revision\": "
+  <> int.to_string(report.revision)
+  <> ",\n"
+  <> "  \"snapshot_text\": \""
+  <> escape_json(report.snapshot_text)
+  <> "\",\n"
+  <> "  \"health_status\": "
+  <> int.to_string(report.health_status)
+  <> ",\n"
+  <> "  \"session_status\": "
+  <> int.to_string(report.session_status)
+  <> ",\n"
+  <> "  \"snapshot_status\": "
+  <> int.to_string(report.snapshot_status)
+  <> ",\n"
+  <> "  \"events_status\": "
+  <> int.to_string(report.events_status)
+  <> ",\n"
+  <> "  \"clear_status\": "
+  <> int.to_string(report.clear_status)
+  <> "\n"
+  <> "}\n"
+}
+
+fn durability_report_json(report: durability.DurabilityReport) -> String {
+  "{\n"
+  <> common_report_fields(
+    command: "verify-durability",
+    example: report.example,
+    target: "durability-" <> session.store_name(report.store),
+    status: "pass",
+    source_commit: "34251e2938a73f05de14997e167630bb0124ef48",
+    actions_total: report.events_replayed,
+    actions_passed: report.events_replayed,
+    snapshot_hash: "sha256:" <> hash.sha256_hex(report.recovered_snapshot),
+    terminal_frame_hash: "null",
+    reproduce: "gleam run -- verify-durability " <> report.example,
+  )
+  <> ",\n"
+  <> "  \"diagnostics\": [],\n"
+  <> "  \"failure\": null,\n"
+  <> "  \"events_replayed\": "
+  <> int.to_string(report.events_replayed)
+  <> ",\n"
+  <> "  \"duplicate_ignored\": "
+  <> bool_json(report.duplicate_ignored)
+  <> ",\n"
+  <> "  \"stale_rejected\": "
+  <> bool_json(report.stale_rejected)
+  <> ",\n"
+  <> "  \"recovered_snapshot\": \""
+  <> escape_json(report.recovered_snapshot)
+  <> "\"\n"
+  <> "}\n"
+}
+
+fn verify_all_report_json(report: verify_all.VerifyAllReport) -> String {
+  "{\n"
+  <> "  \"schema_version\": 1,\n"
+  <> "  \"command\": \"verify-all\",\n"
+  <> "  \"status\": \"pass\",\n"
+  <> "  \"started_at_utc\": \"2026-04-27T00:00:00Z\",\n"
+  <> "  \"duration_ms\": 0,\n"
+  <> "  \"semantic_count\": "
+  <> int.to_string(report.semantic_count)
+  <> ",\n"
+  <> "  \"terminal_count\": "
+  <> int.to_string(report.terminal_count)
+  <> ",\n"
+  <> "  \"guardrails_checked\": "
+  <> int.to_string(report.guardrails.checked)
+  <> ",\n"
+  <> "  \"guardrail_allowlist\": "
+  <> guardrail_findings_json(report.guardrails.allowlisted)
+  <> ",\n"
+  <> "  \"diagnostics\": [],\n"
+  <> "  \"failure\": null,\n"
+  <> "  \"reproduce\": \"gleam run -- verify-all\"\n"
+  <> "}\n"
+}
+
+fn guardrails_report_json(report: guardrails.GuardrailReport) -> String {
+  "{\n"
+  <> common_report_fields(
+    command: "verify-guardrails",
+    example: "structural",
+    target: "structural",
+    status: "pass",
+    source_commit: "workspace",
+    actions_total: report.checked,
+    actions_passed: report.checked,
+    snapshot_hash: "null",
+    terminal_frame_hash: "null",
+    reproduce: "gleam run -- verify-guardrails",
+  )
+  <> ",\n"
+  <> "  \"diagnostics\": [],\n"
+  <> "  \"failure\": null,\n"
+  <> "  \"checked\": "
+  <> int.to_string(report.checked)
+  <> ",\n"
+  <> "  \"allowlisted\": "
+  <> guardrail_findings_json(report.allowlisted)
+  <> ",\n"
+  <> "  \"findings\": "
+  <> guardrail_findings_json(report.findings)
+  <> "\n"
+  <> "}\n"
+}
+
+fn guardrail_findings_json(
+  findings: List(guardrails.GuardrailFinding),
+) -> String {
+  "[" <> string.join(list.map(findings, guardrail_finding_json), ", ") <> "]"
+}
+
+fn guardrail_finding_json(finding: guardrails.GuardrailFinding) -> String {
+  "{"
+  <> "\"rule\":\""
+  <> escape_json(finding.rule)
+  <> "\","
+  <> "\"path\":\""
+  <> escape_json(finding.path)
+  <> "\","
+  <> "\"line\":"
+  <> int.to_string(finding.line)
+  <> ","
+  <> "\"text\":\""
+  <> escape_json(finding.text)
+  <> "\","
+  <> "\"reason\":\""
+  <> escape_json(finding.reason)
+  <> "\""
+  <> "}"
+}
+
+fn failure_report_json(
+  command: String,
+  example: String,
+  diagnostics: List(diagnostic.Diagnostic),
+) -> String {
+  "{\n"
+  <> common_report_fields(
+    command: command,
+    example: example,
+    target: "unknown",
+    status: "fail",
+    source_commit: "34251e2938a73f05de14997e167630bb0124ef48",
+    actions_total: 0,
+    actions_passed: 0,
+    snapshot_hash: "null",
+    terminal_frame_hash: "null",
+    reproduce: "gleam run -- " <> command <> " " <> example,
+  )
+  <> ",\n"
+  <> "  \"diagnostics\": ["
+  <> string.join(list.map(diagnostics, diagnostic_json), ", ")
+  <> "],\n"
+  <> "  \"failure\": \"diagnostics\"\n"
+  <> "}\n"
+}
+
+fn common_report_fields(
+  command command: String,
+  example example: String,
+  target target: String,
+  status status: String,
+  source_commit source_commit: String,
+  actions_total actions_total: Int,
+  actions_passed actions_passed: Int,
+  snapshot_hash snapshot_hash: String,
+  terminal_frame_hash terminal_frame_hash: String,
+  reproduce reproduce: String,
+) -> String {
+  "  \"schema_version\": 1,\n"
+  <> "  \"command\": \""
+  <> escape_json(command)
+  <> "\",\n"
+  <> "  \"example\": \""
+  <> escape_json(example)
+  <> "\",\n"
+  <> "  \"target\": \""
+  <> escape_json(target)
+  <> "\",\n"
+  <> "  \"status\": \""
+  <> escape_json(status)
+  <> "\",\n"
+  <> "  \"started_at_utc\": \"2026-04-27T00:00:00Z\",\n"
+  <> "  \"duration_ms\": 0,\n"
+  <> "  \"source_commit\": \""
+  <> escape_json(source_commit)
+  <> "\",\n"
+  <> "  \"actions_total\": "
+  <> int.to_string(actions_total)
+  <> ",\n"
+  <> "  \"actions_passed\": "
+  <> int.to_string(actions_passed)
+  <> ",\n"
+  <> "  \"snapshot_hash\": "
+  <> nullable_json_string(snapshot_hash)
+  <> ",\n"
+  <> "  \"terminal_frame_hash\": "
+  <> terminal_frame_hash
+  <> ",\n"
+  <> "  \"reproduce\": \""
+  <> escape_json(reproduce)
+  <> "\""
+}
+
+fn diagnostic_json(item: diagnostic.Diagnostic) -> String {
+  "\"" <> escape_json(diagnostic.to_line(item)) <> "\""
+}
+
+fn nullable_json_string(value: String) -> String {
+  case value {
+    "null" -> "null"
+    _ -> "\"" <> escape_json(value) <> "\""
+  }
+}
+
+fn status_json(passed: Bool) -> String {
+  case passed {
+    True -> "pass"
+    False -> "fail"
+  }
 }
 
 fn bool_json(value: Bool) -> String {

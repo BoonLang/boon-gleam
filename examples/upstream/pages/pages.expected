@@ -1,0 +1,81 @@
+# Pages example - multi-page router navigation
+#
+# Test Flow:
+# 1. Initial state check (Home page)
+# 2. Click About → verify page content AND URL changes
+# 3. Click Contact → verify page content AND URL changes
+# 4. Click Home → verify back to home page AND URL changes
+#
+# NOTE: This test verifies URL path changes, which is essential for
+# proper router behavior (back/forward buttons, bookmarking, sharing links)
+
+[test]
+category = "interactive"
+description = "Navigate between pages and verify URL changes"
+
+[output]
+# Initial page should be Home
+text = "Home"
+
+[timing]
+timeout = 8000
+poll_interval = 200
+
+# --- NAVIGATION WITH URL VERIFICATION ---
+
+[[sequence]]
+description = "BUG TEST: Verify initial Home page content is visible"
+actions = [["assert_contains", "Welcome Home"]]
+expect = "Home"
+
+[[sequence]]
+description = "Step 1a: Click About link"
+actions = [["click_text", "About"]]
+expect = "About"
+
+[[sequence]]
+description = "Step 1b: Verify URL contains /about"
+actions = [["assert_url", "/about"]]
+expect = "About"
+
+[[sequence]]
+description = "BUG TEST: Verify About page content changed (should NOT show Welcome Home)"
+actions = [["assert_not_contains", "Welcome Home"]]
+expect = "About"
+
+[[sequence]]
+description = "BUG TEST: Verify About page content is visible"
+actions = [["assert_contains", "A multi-page Boon app"]]
+expect = "About"
+
+[[sequence]]
+description = "Step 2a: Click Contact link"
+actions = [["click_text", "Contact"]]
+expect = "Contact"
+
+[[sequence]]
+description = "Step 2b: Verify URL contains /contact"
+actions = [["assert_url", "/contact"]]
+expect = "Contact"
+
+[[sequence]]
+description = "Step 3a: Click Home link"
+actions = [["click_text", "Home"]]
+expect = "Home"
+
+[[sequence]]
+description = "Step 3b: Verify URL is back to root or /home"
+actions = [["assert_url", "/"]]
+expect = "Home"
+
+# --- PERSISTENCE TEST ---
+# Router state (current page) should persist across re-run
+
+[[persistence]]
+description = "After re-run, should still be on Home page (router state persisted)"
+expect = "Home"
+
+[[persistence]]
+description = "After re-run, URL should still be / (router state persisted)"
+actions = [["assert_url", "/"]]
+expect = "Home"

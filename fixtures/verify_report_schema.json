@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boonlang.org/schemas/boon-gleam/verify_report_schema.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command",
+    "status",
+    "started_at_utc",
+    "duration_ms",
+    "diagnostics",
+    "failure",
+    "reproduce"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "command": { "type": "string" },
+    "example": { "type": "string" },
+    "target": { "type": "string" },
+    "status": { "enum": ["pass", "fail"] },
+    "started_at_utc": { "type": "string" },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "source_commit": { "type": "string" },
+    "actions_total": { "type": "integer", "minimum": 0 },
+    "actions_passed": { "type": "integer", "minimum": 0 },
+    "snapshot_hash": { "type": ["string", "null"] },
+    "terminal_frame_hash": { "type": ["string", "null"] },
+    "diagnostics": { "type": "array" },
+    "failure": { "type": ["string", "null"] },
+    "reproduce": { "type": "string" }
+  },
+  "additionalProperties": true
+}

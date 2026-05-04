@@ -69,6 +69,8 @@ pub fn build(
 }
 
 fn package_toml() -> String {
+  // Guardrail allowlist: generated web_client may fetch Lustre dependency
+  // sources under build/packages; those files are not generated Boon core.
   "name = \"boongleam_web_client\"\n"
   <> "version = \"0.1.0\"\n"
   <> "target = \"javascript\"\n\n"

@@ -22,6 +22,7 @@ pub type State {
     todos: List(TodoItem),
     filter: String,
     editing: String,
+    hovered: String,
     theme: String,
     dark: Bool,
     view_style: String,
@@ -38,6 +39,7 @@ pub type Event {
   ChangeText(link_id: String, text: String)
   ClickText(text: String)
   DblClickText(text: String)
+  HoverText(text: String)
   KeyDown(link_id: String, key: String)
 }
 

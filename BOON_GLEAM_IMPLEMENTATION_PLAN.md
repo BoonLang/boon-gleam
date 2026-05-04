@@ -24,6 +24,8 @@ The required outcome is a deterministic generated Boon core plus adapters for:
 terminal_tui_beam
 durable_backend_beam
 web_frontend_js
+native_gui_sdl3
+browser_gui_canvas2d
 ```
 
 The generated app core is pure:
@@ -50,8 +52,11 @@ event log. Unsupported features must fail with named diagnostics.
 ## 1. Scope And Non-Goals
 
 `boon-gleam` targets typed, distributed, durable, full-stack reactive Boon on
-Gleam. The first complete track is terminal and BEAM backend behavior. Gleam JS
-and Lustre are allowed only for the web-client target.
+Gleam. The first complete track is terminal and BEAM backend behavior. The
+manual playground contract now has three first-class surfaces: terminal, native
+SDL3 GUI, and browser Canvas2D GUI. All three must consume the same generated
+Boon/Gleam runtime behavior through a shared renderer-neutral scene and input
+contract.
 
 In scope:
 
@@ -61,6 +66,9 @@ actor-based app sessions
 supervised runtime processes
 durable event logs and snapshots
 terminal playground
+renderer-neutral GUI scene contract
+native SDL3 GUI playground shell
+browser Canvas2D GUI playground shell
 playable terminal Pong in v0
 playable terminal Arkanoid in v1
 HTTP/WebSocket backend sessions
@@ -72,7 +80,7 @@ Out of scope:
 ```text
 Raybox
 Sokol
-SDL
+SDL outside the narrow native playground shell
 raylib
 WebGPU
 WGSL
@@ -83,6 +91,7 @@ native GPU rendering
 3D rendering
 3D printing
 freestanding Wasm runtime work
+webview-only native playgrounds
 native binary codegen
 Pony codegen
 Zig codegen
@@ -197,6 +206,7 @@ boon-gleam/
     terminal/
     backend/
     web/
+    playground/
     verify/
     bench/
     support/
@@ -207,6 +217,7 @@ boon-gleam/
   build/
     generated/
     reports/
+    playgrounds/
     cache/
     state/
 ```
@@ -378,7 +389,27 @@ verify-durability EXAMPLE_PATH --store local|postgres [--report PATH]
   Verify restart/replay/idempotency/conflict behavior.
 
 tui
-  Launch interactive terminal playground.
+  Launch terminal playground catalog, or show one example with --example NAME.
+
+gui [--doctor|--bootstrap|--example NAME|--backend headless|sdl3] [--report PATH]
+  Launch or verify the native SDL3 GUI playground. Headless verification must
+  consume the same GuiScene contract. SDL3 mode must fail honestly when the
+  repo-local SDL3 bridge is unavailable.
+
+browser [--doctor|--serve|--example NAME|--out PATH|--port N]
+  Build or serve the browser GUI playground bundle. The browser shell uses
+  Canvas2D over the shared GuiScene and must not own example state.
+
+verify-playgrounds [--all|--example NAME] [--report PATH]
+  Run shared terminal/browser/headless playground scene gates.
+
+verify-gui [--all|--example NAME] --backend headless|sdl3 [--report PATH]
+  Verify native GUI playground reports. The sdl3 backend must prove the real
+  native shell or fail with a dependency/bridge diagnostic.
+
+verify-browser [--all|--example NAME] --browser firefox [--report PATH]
+  Verify the browser GUI playground in real Firefox, including nonblank canvas
+  proof and generated-runtime/source metadata.
 
 play EXAMPLE_PATH
   Launch direct interactive full-screen terminal mode.
@@ -1787,6 +1818,11 @@ rg -n "TODO.*pass|fake pass|hardcode|skip.*example|empty snapshot" src \
 # No source-name special casing in compiler/runtime.
 rg -n "counter|todo_mvc|pong|arkanoid|cells" src/lowering src/runtime src/codegen \
   && exit 1 || true
+
+# Playground hosts may render generic scenes and route generic input, but must
+# not contain maintained-example business logic.
+rg -n "todo_mvc|cells|pong|arkanoid|counter" src/playground \
+  && echo "review playground host hits for catalog-only references" || true
 ```
 
 If a guardrail has a legitimate false positive, add a narrow allowlist comment
@@ -1801,9 +1837,10 @@ Use this prompt when asking Codex to create or continue the repository:
 ```text
 Implement boon-gleam from BOON_GLEAM_IMPLEMENTATION_PLAN.md.
 
-Do not add Zig, Rust, Pony, Raybox, Sokol, SDL, WebGPU, Slang, native renderer
-work, or a custom Wasm runtime. Gleam JS + Lustre is allowed only for the web
-target defined in the plan.
+Do not add Zig, Rust, Pony, Raybox, Sokol, WebGPU, Slang, webview-only native
+playgrounds, or a custom Wasm runtime. SDL3 is allowed only for the native GUI
+playground shell defined in this plan. Gleam JS + Lustre and Canvas2D are
+allowed only for the browser target defined in this plan.
 
 Start with Phase 0, then proceed phase by phase. Do not skip a phase acceptance
 gate. Keep all targets going through the same generated init/update/view core.

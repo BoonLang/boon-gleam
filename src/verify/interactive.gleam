@@ -102,22 +102,16 @@ fn initial_model(source: String) -> Model {
         input: "",
         filter: All,
         dark: False,
-        theme: "Professional",
+        theme: extract_initial_theme(source),
       )
     False ->
       case string.contains(source, "Shopping List") {
         True -> Shopping(items: [], input: "")
         False ->
-          case
-            string.contains(source, "Buy groceries")
-            && string.contains(source, "Clean room")
-          {
+          case string.contains(source, "new_todo(title:") {
             True ->
               Todo(
-                items: [
-                  TodoItem(title: "Buy groceries", completed: False),
-                  TodoItem(title: "Clean room", completed: False),
-                ],
+                items: initial_todos(source),
                 input: "",
                 filter: All,
                 editing: "",
@@ -125,6 +119,29 @@ fn initial_model(source: String) -> Model {
             False -> Counter(counter: 0, labels: extract_button_labels(source))
           }
       }
+  }
+}
+
+fn initial_todos(source: String) -> List(TodoItem) {
+  source
+  |> string.split(on: "new_todo(title: TEXT {")
+  |> list.drop(up_to: 1)
+  |> list.filter_map(fn(part) {
+    case string.split(part, on: "}") {
+      [title, ..] -> Ok(TodoItem(title: string.trim(title), completed: False))
+      _ -> Error(Nil)
+    }
+  })
+}
+
+fn extract_initial_theme(source: String) -> String {
+  case string.split_once(source, "name: LATEST {") {
+    Ok(#(_, rest)) ->
+      case string.split(rest |> string.trim_start, on: "\n") {
+        [theme, ..] -> string.trim(theme)
+        _ -> ""
+      }
+    Error(_) -> ""
   }
 }
 
@@ -214,6 +231,7 @@ fn apply_action(model: Model, action: ExpectedAction) -> Result(Model, String) {
     Run -> Ok(model)
     TypeText(text) -> Ok(type_text(model, text))
     Wait(_) -> Ok(model)
+    _ -> Error("expected action is not implemented by the interactive verifier")
   }
 }
 

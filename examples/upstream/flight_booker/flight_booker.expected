@@ -1,0 +1,106 @@
+# Flight Booker (7GUIs Task 3) - booking with date validation
+
+[test]
+category = "interactive"
+description = "7GUIs Task 3: flight booking with date validation"
+
+[output]
+text = "Flight Booker"
+match = "contains"
+
+[timing]
+timeout = 5000
+poll_interval = 200
+
+# SPEC: Initial state - one-way flight selected
+[[sequence]]
+description = "Initial: shows Flight Booker title"
+actions = [["assert_contains", "Flight Booker"]]
+expect = "Flight Booker"
+
+# SPEC: One-way flight option visible
+[[sequence]]
+description = "One-way flight option visible"
+actions = [["assert_contains", "One-way"]]
+expect = "Flight Booker"
+
+# SPEC: Book button visible
+[[sequence]]
+description = "Book button visible"
+actions = [["assert_contains", "Book"]]
+expect = "Flight Booker"
+
+# SPEC: Departure date pre-filled with current date
+[[sequence]]
+description = "Departure date has a date value"
+actions = [["assert_input_value", 0, "2026-03-03"]]
+expect = "Flight Booker"
+
+# SPEC: Return date also pre-filled
+[[sequence]]
+description = "Return date has a date value"
+actions = [["assert_input_value", 1, "2026-03-03"]]
+expect = "Flight Booker"
+
+# SPEC: In one-way mode, return date is disabled
+[[sequence]]
+description = "Return date is disabled for one-way flight"
+actions = [["assert_input_not_typeable", 1]]
+expect = "Flight Booker"
+
+# SPEC: Initial one-way booking is enabled
+[[sequence]]
+description = "Book button starts enabled for valid one-way flight"
+actions = [["assert_button_enabled", 0]]
+expect = "Flight Booker"
+
+# SPEC: Book valid one-way flight -> confirmation message
+[[sequence]]
+description = "Book one-way flight"
+actions = [["click_button", 0]]
+expect = "Booked one-way flight"
+expect_match = "contains"
+
+# SPEC: Switch to return flight via select
+[[sequence]]
+description = "Switch to return flight"
+actions = [["select_option", 0, "return"]]
+expect = "Flight Booker"
+
+# SPEC: In return mode, return date becomes editable
+[[sequence]]
+description = "Return date becomes editable for return flight"
+actions = [["assert_input_typeable", 1]]
+expect = "Flight Booker"
+
+# SPEC: Invalid return date disables booking
+[[sequence]]
+description = "Invalid return date disables Book button"
+actions = [["set_input_value", 1, "2026-03-02"], ["assert_button_disabled", 0]]
+expect = "Flight Booker"
+
+# SPEC: Valid return date re-enables booking
+[[sequence]]
+description = "Valid return date re-enables Book button"
+actions = [["set_input_value", 1, "2026-03-03"], ["assert_button_enabled", 0]]
+expect = "Flight Booker"
+
+# SPEC: Book return flight -> shows both dates
+[[sequence]]
+description = "Book return flight"
+actions = [["click_button", 0]]
+expect = "Booked return flight"
+expect_match = "contains"
+
+# SPEC: Switch back to one-way
+[[sequence]]
+description = "Switch back to one-way flight"
+actions = [["select_option", 0, "one-way"]]
+expect = "Flight Booker"
+
+# SPEC: Can still book one-way after switching back
+[[sequence]]
+description = "Book one-way again"
+actions = [["click_button", 0]]
+expect = "Booked one-way flight"
+expect_match = "contains"

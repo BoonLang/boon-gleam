@@ -4,6 +4,7 @@ import frontend/diagnostic
 import gleam/list
 import gleam/option.{Some}
 import gleeunit
+import playground/core as playground_core
 import project/loader
 import project/project as project_model
 import support/version
@@ -77,6 +78,26 @@ pub fn expected_parser_rejects_unknown_actions_test() {
   assert code == "expected_parse_failed"
 }
 
+pub fn expected_parser_allows_sequence_only_files_test() {
+  let contents =
+    "[test]\n"
+    <> "category = \"interactive\"\n"
+    <> "\n"
+    <> "[[sequence]]\n"
+    <> "actions = [[\"assert_cells_cell_text\", 1, 1, \"5\"]]\n"
+
+  let assert Ok(expected.Expected(text, steps)) =
+    expected.parse_text("fixture.expected", contents)
+  assert text == ""
+  let assert [
+    expected.ExpectedStep(
+      expected.SequenceStep,
+      [expected.AssertCellsCellText(1, 1, "5")],
+      "",
+    ),
+  ] = steps
+}
+
 pub fn loader_imports_build_project_manifest_test() {
   let assert Ok(project_model.Project(
     entry_file: entry_file,
@@ -124,4 +145,28 @@ pub fn backend_session_rejects_stale_and_reuses_duplicates_test() {
 
   let assert Error(session.RevisionConflict(current_revision: 1)) =
     session.accept_event(after_first, "event-stale", 0, "click")
+}
+
+pub fn playground_catalog_exposes_three_platform_examples_test() {
+  let assert Ok(example) = playground_core.find_example("counter")
+
+  assert example.path == "examples/upstream/counter"
+  assert example.terminal == playground_core.PlatformReady
+  assert example.native == playground_core.PlatformReady
+  assert example.browser == playground_core.PlatformReady
+}
+
+pub fn playground_scene_preserves_source_and_runtime_snapshot_test() {
+  let assert Ok(scene) =
+    playground_core.scene("counter", playground_core.BrowserGuiTarget)
+
+  assert scene.example.name == "counter"
+  assert scene.source_path == "examples/upstream/counter/counter.bn"
+  assert scene.snapshot_text == "0+"
+  assert scene.commands != []
+  assert scene.hit_regions != []
+
+  let proof = playground_core.proof("test", scene)
+  assert proof.status == "pass"
+  assert proof.runtime_origin == "generated-boon-gleam-core"
 }

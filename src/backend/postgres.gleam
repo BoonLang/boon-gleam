@@ -89,6 +89,13 @@ fn store_for_connection(connection: pog.Connection) -> session.Store {
 pub fn setup(database_url: String) -> Result(Nil, List(Diagnostic)) {
   use url <- result_try_database_url(database_url)
   use connection <- result_try_connection(url)
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_column())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_project_id())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_created_at())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_json_type())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_primary_key())
+  use _ <- result_try_query(connection, migrate_snapshot_primary_key())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_unique_index())
   use _ <- result_try_query(connection, sessions_schema())
   use _ <- result_try_query(connection, events_schema())
   use _ <- result_try_query(connection, event_results_schema())
@@ -102,6 +109,13 @@ pub fn verify_session(
 ) -> Result(PostgresReport, List(Diagnostic)) {
   use url <- result_try_database_url(database_url)
   use connection <- result_try_connection(url)
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_column())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_project_id())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_created_at())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_json_type())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_primary_key())
+  use _ <- result_try_query(connection, migrate_snapshot_primary_key())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_unique_index())
   use _ <- result_try_query(connection, sessions_schema())
   use _ <- result_try_query(connection, events_schema())
   use _ <- result_try_query(connection, event_results_schema())
@@ -190,6 +204,13 @@ pub fn benchmark_events(
 ) -> Result(List(Int), List(Diagnostic)) {
   use url <- result_try_database_url(database_url)
   use connection <- result_try_connection(url)
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_column())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_project_id())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_created_at())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_json_type())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_primary_key())
+  use _ <- result_try_query(connection, migrate_snapshot_primary_key())
+  use _ <- result_try_query(connection, migrate_legacy_snapshot_unique_index())
   use _ <- result_try_query(connection, sessions_schema())
   use _ <- result_try_query(connection, events_schema())
   use _ <- result_try_query(connection, event_results_schema())
@@ -643,6 +664,34 @@ fn result_try_store_connection(
   use connection <- result_try_store_pool(database_url)
   use _ <- result_try_store_query(execute_store_query(
     connection,
+    migrate_legacy_snapshot_column(),
+  ))
+  use _ <- result_try_store_query(execute_store_query(
+    connection,
+    migrate_legacy_snapshot_project_id(),
+  ))
+  use _ <- result_try_store_query(execute_store_query(
+    connection,
+    migrate_legacy_snapshot_created_at(),
+  ))
+  use _ <- result_try_store_query(execute_store_query(
+    connection,
+    migrate_legacy_snapshot_json_type(),
+  ))
+  use _ <- result_try_store_query(execute_store_query(
+    connection,
+    migrate_legacy_snapshot_primary_key(),
+  ))
+  use _ <- result_try_store_query(execute_store_query(
+    connection,
+    migrate_snapshot_primary_key(),
+  ))
+  use _ <- result_try_store_query(execute_store_query(
+    connection,
+    migrate_legacy_snapshot_unique_index(),
+  ))
+  use _ <- result_try_store_query(execute_store_query(
+    connection,
     sessions_schema(),
   ))
   use _ <- result_try_store_query(execute_store_query(
@@ -838,6 +887,105 @@ CREATE TABLE IF NOT EXISTS boon_sessions (
   current_revision bigint NOT NULL,
   PRIMARY KEY (project_id, session_id)
 )
+"
+}
+
+fn migrate_legacy_snapshot_column() -> String {
+  "
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'boon_snapshots'
+      AND column_name = 'snapshot'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'boon_snapshots'
+      AND column_name = 'snapshot_json'
+  ) THEN
+    ALTER TABLE boon_snapshots RENAME COLUMN snapshot TO snapshot_json;
+  END IF;
+END $$
+"
+}
+
+fn migrate_legacy_snapshot_project_id() -> String {
+  "
+ALTER TABLE IF EXISTS boon_snapshots
+  ADD COLUMN IF NOT EXISTS project_id text NOT NULL DEFAULT 'legacy'
+"
+}
+
+fn migrate_legacy_snapshot_created_at() -> String {
+  "
+ALTER TABLE IF EXISTS boon_snapshots
+  ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()
+"
+}
+
+fn migrate_legacy_snapshot_json_type() -> String {
+  "
+ALTER TABLE IF EXISTS boon_snapshots
+  ALTER COLUMN snapshot_json TYPE jsonb USING snapshot_json::jsonb
+"
+}
+
+fn migrate_legacy_snapshot_primary_key() -> String {
+  "
+DO $$
+DECLARE
+  legacy_primary_key text;
+BEGIN
+  SELECT constraint_name INTO legacy_primary_key
+  FROM information_schema.table_constraints
+  WHERE table_schema = 'public'
+    AND table_name = 'boon_snapshots'
+    AND constraint_type = 'PRIMARY KEY'
+    AND constraint_name NOT IN (
+      SELECT constraint_name
+      FROM information_schema.key_column_usage
+      WHERE table_schema = 'public'
+        AND table_name = 'boon_snapshots'
+        AND column_name IN ('project_id', 'session_id', 'revision')
+      GROUP BY constraint_name
+      HAVING count(*) = 3
+    )
+  LIMIT 1;
+
+  IF legacy_primary_key IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE boon_snapshots DROP CONSTRAINT ' || quote_ident(legacy_primary_key);
+  END IF;
+END $$
+"
+}
+
+fn migrate_snapshot_primary_key() -> String {
+  "
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'boon_snapshots'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_schema = 'public'
+      AND table_name = 'boon_snapshots'
+      AND constraint_type = 'PRIMARY KEY'
+  ) THEN
+    ALTER TABLE boon_snapshots
+      ADD PRIMARY KEY (project_id, session_id, revision);
+  END IF;
+END $$
+"
+}
+
+fn migrate_legacy_snapshot_unique_index() -> String {
+  "
+CREATE UNIQUE INDEX IF NOT EXISTS boon_snapshots_project_session_revision_idx
+  ON boon_snapshots (project_id, session_id, revision)
 "
 }
 

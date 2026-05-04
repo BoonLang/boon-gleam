@@ -1,0 +1,11 @@
+# Layers example - stacked cards render in retained absolute layout
+
+[test]
+category = "layout"
+description = "Layers renders the stacked card labels"
+
+[output]
+text = "Red CardGreen CardBlue Card"
+
+[timing]
+timeout = 5000

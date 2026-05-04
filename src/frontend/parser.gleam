@@ -28,6 +28,21 @@ fn parse_definitions(
   case tokens {
     [] -> Ok(Program(list.reverse(definitions)))
     [Token(EndOfFile, _, _), ..] -> Ok(Program(list.reverse(definitions)))
+    [
+      Token(Identifier("FUNCTION"), _, _),
+      Token(Identifier(name), _, span),
+      ..rest
+    ] -> {
+      let #(body, remaining) = split_function_body(rest, [], 0, False)
+      parse_definitions(path, remaining, [
+        Definition(
+          name,
+          RawExpression("FUNCTION " <> name <> " " <> tokens_to_text(body)),
+          span,
+        ),
+        ..definitions
+      ])
+    }
     [Token(Identifier(name), _, span), Token(Colon, _, _), ..rest] -> {
       let #(body, remaining) = split_definition_body(rest, [])
       let value = parse_definition_body(path, body)
@@ -45,6 +60,34 @@ fn parse_definitions(
           "expected a top-level definition in the form `name: expression`",
         ),
       ])
+  }
+}
+
+fn split_function_body(
+  tokens: List(Token),
+  acc: List(Token),
+  depth: Int,
+  opened: Bool,
+) -> #(List(Token), List(Token)) {
+  case tokens {
+    [] -> #(list.reverse(acc), [])
+    [Token(EndOfFile, _, _), ..] -> #(list.reverse(acc), tokens)
+    [Token(LeftBrace, _, _), ..rest] ->
+      split_function_body(
+        rest,
+        [Token(LeftBrace, "{", Span(1, 1, 0, 0)), ..acc],
+        depth + 1,
+        True,
+      )
+    [Token(RightBrace, _, _), ..rest] -> {
+      let next_depth = depth - 1
+      let next_acc = [Token(RightBrace, "}", Span(1, 1, 0, 0)), ..acc]
+      case opened && next_depth <= 0 {
+        True -> #(list.reverse(next_acc), rest)
+        False -> split_function_body(rest, next_acc, next_depth, opened)
+      }
+    }
+    [token, ..rest] -> split_function_body(rest, [token, ..acc], depth, opened)
   }
 }
 
