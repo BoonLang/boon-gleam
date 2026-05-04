@@ -93,13 +93,14 @@ fn gui(args: List(String)) -> Nil {
       let report = native_playground.doctor()
       io.println(native_playground.doctor_json(report))
     }
-    ["--bootstrap", ..] ->
-      case
-        native_playground.bootstrap_report("build/reports/gui-bootstrap.json")
-      {
+    ["--bootstrap", ..] -> {
+      let report_path =
+        flag_string(args, "--report", "build/reports/gui-bootstrap.json")
+      case native_playground.bootstrap_report(report_path) {
         Error(diagnostics) -> fail_with_diagnostics(diagnostics)
         Ok(report) -> io.println(report)
       }
+    }
     _ -> {
       let example = flag_string(args, "--example", "todo_mvc")
       let report_path =
@@ -280,14 +281,8 @@ fn verify_gui_one(
             report_path,
           )
       }
-    "gtk4" ->
-      case native_playground.verify_gtk(example, report_path) {
-        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
-        Ok(proof) ->
-          finish_playground_proof("verify-gui backend=gtk4", proof, report_path)
-      }
     "sdl3" ->
-      case native_playground.run_sdl3(example, report_path) {
+      case native_playground.verify_sdl3(example, report_path) {
         Error(diagnostics) -> fail_with_diagnostics(diagnostics)
         Ok(proof) ->
           finish_playground_proof("verify-gui backend=sdl3", proof, report_path)
@@ -302,7 +297,7 @@ fn verify_gui_one(
           span_start: 0,
           span_end: 0,
           message: "unsupported GUI backend: " <> backend,
-          help: "use --backend headless, gtk4, or sdl3",
+          help: "use --backend headless or sdl3",
         ),
       ])
   }
@@ -395,8 +390,7 @@ fn verify_gui_loop(
         "build/reports/verify-gui-" <> backend <> "-" <> example.name <> ".json"
       let result = case backend {
         "headless" -> native_playground.verify(example.name, report_path)
-        "gtk4" -> native_playground.verify_gtk(example.name, report_path)
-        "sdl3" -> native_playground.run_sdl3(example.name, report_path)
+        "sdl3" -> native_playground.verify_sdl3(example.name, report_path)
         _ ->
           Error([
             diagnostic.error(
@@ -407,7 +401,7 @@ fn verify_gui_loop(
               span_start: 0,
               span_end: 0,
               message: "unsupported GUI backend: " <> backend,
-              help: "use --backend headless, gtk4, or sdl3",
+              help: "use --backend headless or sdl3",
             ),
           ])
       }
