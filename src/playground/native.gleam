@@ -13,6 +13,7 @@ pub type NativeDoctorReport {
   NativeDoctorReport(
     sdl3: String,
     sdl3_package: String,
+    sdl3_ttf: String,
     sdl3_binary: String,
     cosmic_background_launch: String,
     bridge: String,
@@ -29,6 +30,7 @@ pub fn doctor() -> NativeDoctorReport {
   NativeDoctorReport(
     sdl3: probe.status,
     sdl3_package: probe.package_name,
+    sdl3_ttf: sdl3_ttf_status(),
     sdl3_binary: case file.is_file(sdl_binary()) {
       True -> "available"
       False -> "missing"
@@ -49,6 +51,9 @@ pub fn doctor_json(report: NativeDoctorReport) -> String {
   <> "\",\n"
   <> "  \"sdl3_package\": \""
   <> core.escape_json(report.sdl3_package)
+  <> "\",\n"
+  <> "  \"sdl3_ttf\": \""
+  <> core.escape_json(report.sdl3_ttf)
   <> "\",\n"
   <> "  \"sdl3_binary\": \""
   <> core.escape_json(report.sdl3_binary)
@@ -211,12 +216,17 @@ fn compile_sdl3() -> List(String) {
   case probe.status {
     "available" -> {
       let command =
-        "mkdir -p build/native && cc "
+        "mkdir -p build/native && "
+        <> sdl_env()
+        <> " cc "
         <> sdl_source()
         <> " -o "
         <> sdl_binary()
-        <> " $(pkg-config --cflags --libs "
+        <> " $("
+        <> sdl_env()
+        <> " pkg-config --cflags --libs "
         <> probe.package_name
+        <> " sdl3-ttf"
         <> ")"
       case command_succeeds(command) && file.is_file(sdl_binary()) {
         True -> []
@@ -226,13 +236,19 @@ fn compile_sdl3() -> List(String) {
     status -> [
       "SDL3 native shell is unavailable: "
       <> status
-      <> "; install/provide pkg-config package `sdl3` or `SDL3`",
+      <> "; install/provide pkg-config packages `sdl3` and `sdl3-ttf`",
     ]
   }
 }
 
 fn run_sdl3_verify(scene_path: String) -> List(String) {
-  let command = sdl_binary() <> " " <> scene_path <> " --verify --exit-ms 600"
+  let command =
+    sdl_env()
+    <> " "
+    <> sdl_binary()
+    <> " "
+    <> scene_path
+    <> " --verify --exit-ms 600"
   case background_launch.run_and_wait("native-sdl3-smoke", command, 20) {
     True -> []
     False -> [
@@ -248,9 +264,8 @@ fn run_sdl3_manual(scene_path: String) -> List(String) {
     )
   let command =
     "cosmic-background-launch --workspace boon-gleam -- "
-    <> sdl_binary()
-    <> " "
-    <> scene_path
+    <> "sh -c "
+    <> shell_quote(sdl_env() <> " " <> sdl_binary() <> " " <> scene_path)
   case command_succeeds(command) {
     True -> []
     False -> ["SDL3 native playground process failed"]
@@ -265,15 +280,31 @@ fn sdl_binary() -> String {
   "build/native/boon_sdl3_playground"
 }
 
+fn local_sdl_pkgconfig() -> String {
+  ".boon-local/sdl3/lib/pkgconfig"
+}
+
+fn local_sdl_lib() -> String {
+  ".boon-local/sdl3/lib"
+}
+
+fn sdl_env() -> String {
+  "PKG_CONFIG_PATH=$PWD/"
+  <> local_sdl_pkgconfig()
+  <> "${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH} LD_LIBRARY_PATH=$PWD/"
+  <> local_sdl_lib()
+  <> "${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+}
+
 type Sdl3Probe {
   Sdl3Probe(status: String, package_name: String)
 }
 
 fn sdl3_probe() -> Sdl3Probe {
-  case pkg_config_available("sdl3") {
+  case pkg_config_available_with_env("sdl3") {
     True -> Sdl3Probe(status: "available", package_name: "sdl3")
     False ->
-      case pkg_config_available("SDL3") {
+      case pkg_config_available_with_env("SDL3") {
         True -> Sdl3Probe(status: "available", package_name: "SDL3")
         False ->
           Sdl3Probe(
@@ -284,9 +315,16 @@ fn sdl3_probe() -> Sdl3Probe {
   }
 }
 
-fn pkg_config_available(name: String) -> Bool {
+fn sdl3_ttf_status() -> String {
+  case pkg_config_available_with_env("sdl3-ttf") {
+    True -> "available"
+    False -> "pkg-config-could-not-resolve-sdl3-ttf"
+  }
+}
+
+fn pkg_config_available_with_env(name: String) -> Bool {
   os_cmd(charlist.from_string(
-    "sh -c 'pkg-config --exists " <> name <> "; echo $?'",
+    "sh -c '" <> sdl_env() <> " pkg-config --exists " <> name <> "; echo $?'",
   ))
   |> charlist.to_string
   |> string.trim
@@ -294,9 +332,15 @@ fn pkg_config_available(name: String) -> Bool {
 }
 
 fn command_succeeds(command: String) -> Bool {
-  os_cmd(charlist.from_string("sh -c '" <> command <> "; echo EXIT:$?'"))
+  os_cmd(charlist.from_string(
+    "sh -c " <> shell_quote(command <> "; echo EXIT:$?"),
+  ))
   |> charlist.to_string
   |> string.contains("EXIT:0")
+}
+
+fn shell_quote(value: String) -> String {
+  "'" <> string.replace(value, "'", "'\"'\"'") <> "'"
 }
 
 fn string_list_json(values: List(String)) -> String {
