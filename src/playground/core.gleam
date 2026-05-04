@@ -270,6 +270,9 @@ pub fn scene_json(scene: GuiScene) -> String {
   <> "  \"snapshot_text\": \""
   <> escape_json(scene.snapshot_text)
   <> "\",\n"
+  <> "  \"catalog_text\": \""
+  <> escape_json(catalog_scene_text())
+  <> "\",\n"
   <> "  \"commands\": "
   <> draw_commands_json(scene.commands)
   <> ",\n"
@@ -282,6 +285,19 @@ pub fn scene_json(scene: GuiScene) -> String {
 pub fn catalog_text() -> String {
   catalog()
   |> list.map(fn(example) { example.name <> "  " <> example.path })
+  |> string.join(with: "\n")
+}
+
+fn catalog_scene_text() -> String {
+  catalog()
+  |> list.map(fn(example) {
+    example.name
+    <> "\t"
+    <> example.label
+    <> "\tbuild/playgrounds/native-"
+    <> example.name
+    <> "/scene.json"
+  })
   |> string.join(with: "\n")
 }
 

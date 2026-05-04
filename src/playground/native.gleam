@@ -142,6 +142,7 @@ fn run_gtk(
   verify_mode: Bool,
 ) -> Result(core.PlaygroundProof, List(Diagnostic)) {
   use scene <- result_try(core.scene(selector, core.NativeGuiTarget))
+  use _ <- result_try(write_native_catalog_scenes())
   let scene_path =
     "build/playgrounds/native-" <> scene.example.name <> "/scene.json"
   use _ <- result_try_io(
@@ -187,6 +188,28 @@ fn run_gtk(
           help: "inspect " <> report_path,
         ),
       ])
+  }
+}
+
+fn write_native_catalog_scenes() -> Result(Nil, List(Diagnostic)) {
+  write_native_catalog_scene_loop(core.catalog())
+}
+
+fn write_native_catalog_scene_loop(
+  examples: List(core.CatalogExample),
+) -> Result(Nil, List(Diagnostic)) {
+  case examples {
+    [] -> Ok(Nil)
+    [example, ..rest] -> {
+      use scene <- result_try(core.scene(example.name, core.NativeGuiTarget))
+      let scene_path =
+        "build/playgrounds/native-" <> scene.example.name <> "/scene.json"
+      use _ <- result_try_io(
+        file.write_text_file(scene_path, core.scene_json(scene)),
+        scene_path,
+      )
+      write_native_catalog_scene_loop(rest)
+    }
   }
 }
 
@@ -236,6 +259,10 @@ fn run_gtk_verify(scene_path: String) -> List(String) {
 }
 
 fn run_gtk_manual(scene_path: String) -> List(String) {
+  let _ =
+    command_succeeds(
+      "pgrep -f \"^build/native/boon_gtk_playground \" | xargs -r kill",
+    )
   let command =
     "cosmic-background-launch --workspace boon-gleam -- "
     <> gtk_binary()
