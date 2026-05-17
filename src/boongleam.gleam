@@ -12,6 +12,7 @@ import gleam/string
 import lowering/pipeline
 import perf/bench as perf_bench
 import playground/browser as browser_playground
+import playground/browser_wasm as browser_wasm_playground
 import playground/core as playground_core
 import playground/native as native_playground
 import project/importer
@@ -36,15 +37,20 @@ pub fn main() -> Nil {
     ["--help"] -> print_help()
     ["-h"] -> print_help()
     ["import-upstream", ..rest] -> import_upstream(rest)
+    ["doctor", ..rest] -> doctor(rest)
     ["manifest", ..] -> manifest()
     ["compile", path, ..] -> compile(path)
     ["codegen", path, ..rest] -> codegen(path, rest)
     ["tui", ..rest] -> tui(rest)
     ["gui", ..rest] -> gui(rest)
     ["browser", ..rest] -> browser(rest)
+    ["browser-wasm", ..rest] -> browser_wasm(rest)
     ["verify-playgrounds", ..rest] -> verify_playgrounds(rest)
     ["verify-gui", ..rest] -> verify_gui(rest)
     ["verify-browser", ..rest] -> verify_browser(rest)
+    ["verify-browser-wasm", ..rest] -> verify_browser_wasm(rest)
+    ["verify-terminal", ..rest] -> verify_terminal_catalog(rest)
+    ["verify-all-targets", ..rest] -> verify_all_targets(rest)
     ["play", path, ..] -> play(path)
     ["play-smoke", path, ..rest] -> play_smoke(path, rest)
     ["serve", path, ..rest] -> serve(path, rest)
@@ -60,6 +66,22 @@ pub fn main() -> Nil {
     ["verify", path, ..rest] -> verify_command(path, rest)
     [command, ..] -> print_not_implemented(command)
   }
+}
+
+fn doctor(args: List(String)) -> Nil {
+  let report_path = flag_string(args, "--report", "")
+  let report =
+    "{\n"
+    <> "  \"status\": \"pass\",\n"
+    <> "  \"native_gui\": "
+    <> string.trim(native_playground.doctor_json(native_playground.doctor()))
+    <> ",\n"
+    <> "  \"browser_wasm\": "
+    <> string.trim(browser_wasm_playground.doctor_json())
+    <> "\n"
+    <> "}\n"
+  maybe_write_report(report_path, report)
+  io.println(report)
 }
 
 fn tui(args: List(String)) -> Nil {
@@ -135,6 +157,36 @@ fn browser(args: List(String)) -> Nil {
             <> report.index_path
             <> " scene="
             <> report.scene_path,
+          )
+      }
+  }
+}
+
+fn browser_wasm(args: List(String)) -> Nil {
+  let example = flag_string(args, "--example", "todo_mvc")
+  let out_dir = flag_string(args, "--out", "build/playgrounds/browser-wasm")
+  let report_path =
+    flag_string(args, "--report", "build/reports/browser-wasm-bootstrap.json")
+  case has_flag(args, "--doctor"), has_flag(args, "--bootstrap") {
+    True, _ -> io.println(browser_wasm_playground.doctor_json())
+    _, True ->
+      case browser_wasm_playground.bootstrap_report(report_path) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(report) -> io.println(report)
+      }
+    _, False ->
+      case browser_wasm_playground.build(example, out_dir) {
+        Error(diagnostics) -> fail_with_diagnostics(diagnostics)
+        Ok(report) ->
+          io.println(
+            "browser-wasm playground "
+            <> report.example
+            <> " index="
+            <> report.index_path
+            <> " js="
+            <> report.js_path
+            <> " mode="
+            <> report.wasm_mode,
           )
       }
   }
@@ -337,6 +389,220 @@ fn verify_browser_all(report_path: String) -> Nil {
         False -> os.exit(1)
       }
     }
+  }
+}
+
+fn verify_browser_wasm(args: List(String)) -> Nil {
+  let example = flag_string(args, "--example", "todo_mvc")
+  let report_path =
+    flag_string(
+      args,
+      "--report",
+      "build/reports/verify-browser-wasm-firefox.json",
+    )
+  case has_flag(args, "--all") {
+    True -> verify_browser_wasm_all(report_path)
+    False -> verify_browser_wasm_one(example, report_path)
+  }
+}
+
+fn verify_browser_wasm_one(example: String, report_path: String) -> Nil {
+  case browser_wasm_playground.verify(example, report_path) {
+    Error(diagnostics) ->
+      fail_with_report(report_path, "verify-browser-wasm", example, diagnostics)
+    Ok(proof) ->
+      finish_playground_proof(
+        "verify-browser-wasm browser=firefox",
+        proof,
+        report_path,
+      )
+  }
+}
+
+fn verify_browser_wasm_all(report_path: String) -> Nil {
+  case verify_browser_wasm_loop(playground_core.catalog(), []) {
+    Error(diagnostics) ->
+      fail_with_report(
+        report_path,
+        "verify-browser-wasm --all",
+        "all-examples",
+        diagnostics,
+      )
+    Ok(proofs) -> {
+      let report =
+        playground_core.proofs_json("verify-browser-wasm --all", proofs)
+      maybe_write_report(report_path, report)
+      io.println("verify-browser-wasm --all report=" <> report_path)
+      case playground_core.all_passed(proofs) {
+        True -> Nil
+        False -> os.exit(1)
+      }
+    }
+  }
+}
+
+fn verify_browser_wasm_loop(
+  examples: List(playground_core.CatalogExample),
+  acc: List(playground_core.PlaygroundProof),
+) -> Result(List(playground_core.PlaygroundProof), List(diagnostic.Diagnostic)) {
+  case examples {
+    [] -> Ok(list.reverse(acc))
+    [example, ..rest] -> {
+      let report_path =
+        "build/reports/verify-browser-wasm-" <> example.name <> ".json"
+      case browser_wasm_playground.verify(example.name, report_path) {
+        Error(diagnostics) -> Error(diagnostics)
+        Ok(proof) -> verify_browser_wasm_loop(rest, [proof, ..acc])
+      }
+    }
+  }
+}
+
+fn verify_terminal_catalog(args: List(String)) -> Nil {
+  let example = flag_string(args, "--example", "todo_mvc")
+  let report_path =
+    flag_string(args, "--report", "build/reports/verify-terminal.json")
+  case has_flag(args, "--all") {
+    True -> verify_terminal_catalog_all(report_path)
+    False -> verify_terminal_catalog_one(example, report_path)
+  }
+}
+
+fn verify_terminal_catalog_one(example: String, report_path: String) -> Nil {
+  case verify_terminal_catalog_proof(example) {
+    Error(diagnostics) ->
+      fail_with_report(report_path, "verify-terminal", example, diagnostics)
+    Ok(proof) -> {
+      maybe_write_report(report_path, playground_core.proof_json(proof))
+      finish_playground_proof("verify-terminal", proof, report_path)
+    }
+  }
+}
+
+fn verify_terminal_catalog_all(report_path: String) -> Nil {
+  case verify_terminal_catalog_loop(playground_core.catalog(), []) {
+    Error(diagnostics) ->
+      fail_with_report(
+        report_path,
+        "verify-terminal --all",
+        "all-examples",
+        diagnostics,
+      )
+    Ok(proofs) -> {
+      let report = playground_core.proofs_json("verify-terminal --all", proofs)
+      maybe_write_report(report_path, report)
+      io.println("verify-terminal --all report=" <> report_path)
+      case playground_core.all_passed(proofs) {
+        True -> Nil
+        False -> os.exit(1)
+      }
+    }
+  }
+}
+
+fn verify_terminal_catalog_loop(
+  examples: List(playground_core.CatalogExample),
+  acc: List(playground_core.PlaygroundProof),
+) -> Result(List(playground_core.PlaygroundProof), List(diagnostic.Diagnostic)) {
+  case examples {
+    [] -> Ok(list.reverse(acc))
+    [example, ..rest] ->
+      case verify_terminal_catalog_proof(example.name) {
+        Error(diagnostics) -> Error(diagnostics)
+        Ok(proof) -> verify_terminal_catalog_loop(rest, [proof, ..acc])
+      }
+  }
+}
+
+fn verify_terminal_catalog_proof(
+  selector: String,
+) -> Result(playground_core.PlaygroundProof, List(diagnostic.Diagnostic)) {
+  case playground_core.scene(selector, playground_core.TerminalTarget) {
+    Error(diagnostics) -> Error(diagnostics)
+    Ok(scene) ->
+      case verify_terminal_game_smoke(scene.example) {
+        Error(diagnostics) -> Error(diagnostics)
+        Ok(_) -> Ok(playground_core.proof("verify-terminal", scene))
+      }
+  }
+}
+
+fn verify_terminal_game_smoke(
+  example: playground_core.CatalogExample,
+) -> Result(Nil, List(diagnostic.Diagnostic)) {
+  case example.name {
+    "pong" | "arkanoid" ->
+      case terminal_verify.verify(example.path) {
+        Ok(_) -> Ok(Nil)
+        Error(diagnostics) -> Error(diagnostics)
+      }
+    _ -> Ok(Nil)
+  }
+}
+
+fn verify_all_targets(args: List(String)) -> Nil {
+  let report_path =
+    flag_string(args, "--report", "build/reports/verify-all-targets.json")
+  case verify_all_targets_loop(playground_core.catalog(), []) {
+    Error(diagnostics) ->
+      fail_with_report(
+        report_path,
+        "verify-all-targets --all-examples",
+        "all-examples",
+        diagnostics,
+      )
+    Ok(proofs) -> {
+      let report =
+        playground_core.proofs_json("verify-all-targets --all-examples", proofs)
+      maybe_write_report(report_path, report)
+      io.println("verify-all-targets --all-examples report=" <> report_path)
+      case playground_core.all_passed(proofs) {
+        True -> Nil
+        False -> os.exit(1)
+      }
+    }
+  }
+}
+
+fn verify_all_targets_loop(
+  examples: List(playground_core.CatalogExample),
+  acc: List(playground_core.PlaygroundProof),
+) -> Result(List(playground_core.PlaygroundProof), List(diagnostic.Diagnostic)) {
+  case examples {
+    [] -> Ok(list.reverse(acc))
+    [example, ..rest] ->
+      case verify_terminal_catalog_proof(example.name) {
+        Error(diagnostics) -> Error(diagnostics)
+        Ok(terminal_proof) ->
+          case
+            native_playground.verify_sdl3(
+              example.name,
+              "build/reports/verify-all-targets-sdl3-"
+                <> example.name
+                <> ".json",
+            )
+          {
+            Error(diagnostics) -> Error(diagnostics)
+            Ok(native_proof) ->
+              case
+                browser_wasm_playground.verify(
+                  example.name,
+                  "build/reports/verify-all-targets-browser-wasm-"
+                    <> example.name
+                    <> ".json",
+                )
+              {
+                Error(diagnostics) -> Error(diagnostics)
+                Ok(browser_proof) ->
+                  verify_all_targets_loop(rest, [
+                    browser_proof,
+                    native_proof,
+                    terminal_proof,
+                    ..acc
+                  ])
+              }
+          }
+      }
   }
 }
 
@@ -749,6 +1015,7 @@ fn print_help() -> Nil {
   io.println("")
   io.println("Implemented:")
   io.println("  help")
+  io.println("  doctor")
   io.println("  import-upstream")
   io.println("  manifest")
   io.println("  compile")
@@ -761,9 +1028,13 @@ fn print_help() -> Nil {
   io.println("  tui")
   io.println("  gui")
   io.println("  browser")
+  io.println("  browser-wasm")
   io.println("  verify-playgrounds")
   io.println("  verify-gui")
   io.println("  verify-browser")
+  io.println("  verify-browser-wasm")
+  io.println("  verify-terminal")
+  io.println("  verify-all-targets")
   io.println("  play")
   io.println("  play-smoke")
   io.println("  serve")

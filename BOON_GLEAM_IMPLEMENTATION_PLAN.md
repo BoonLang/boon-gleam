@@ -54,11 +54,14 @@ event log. Unsupported features must fail with named diagnostics.
 `boon-gleam` targets typed, distributed, durable, full-stack reactive Boon on
 Gleam. The first complete track is terminal and BEAM backend behavior. The
 manual playground contract now has three first-class surfaces: terminal, native
-SDL3 GUI, and browser Canvas2D GUI. SDL3 is the only native GUI backend; GTK4 is
-not an allowed fallback. If SDL3 is unavailable, native GUI commands must fail
+SDL3 GUI, and browser WASM GUI. SDL3 is the only native GUI backend; GTK4 is not
+an allowed fallback. If SDL3 is unavailable, native GUI commands must fail
 honestly with dependency/bootstrap diagnostics instead of using another toolkit.
-All three surfaces must consume the same generated Boon/Gleam runtime behavior
-through a shared renderer-neutral scene and input contract.
+The browser target must load a WASM artifact; a JS-only Canvas2D shell may exist
+only as a diagnostic/development path and must never be counted as browser WASM
+completion. All three production surfaces must consume the same generated
+Boon/Gleam runtime behavior through a shared renderer-neutral scene and input
+contract.
 
 In scope:
 
@@ -70,7 +73,7 @@ durable event logs and snapshots
 terminal playground
 renderer-neutral GUI scene contract
 native SDL3 GUI playground shell
-browser Canvas2D GUI playground shell
+browser WASM GUI playground shell
 playable terminal Pong in v0
 playable terminal Arkanoid in v1
 HTTP/WebSocket backend sessions
@@ -401,8 +404,14 @@ gui [--doctor|--bootstrap|--example NAME|--backend headless|sdl3] [--report PATH
   repo-local SDL3 shell are unavailable.
 
 browser [--doctor|--serve|--example NAME|--out PATH|--port N]
-  Build or serve the browser GUI playground bundle. The browser shell uses
-  Canvas2D over the shared GuiScene and must not own example state.
+  Build or serve the legacy browser diagnostic playground bundle. This command
+  is not a browser-WASM acceptance gate.
+
+browser-wasm [--doctor|--bootstrap|--build|--example NAME|--out PATH] [--report PATH]
+  Build or diagnose the browser WASM playground bundle. The bundle must include
+  a WASM-backed runtime artifact and minimal JS glue only for loading, mounting,
+  event forwarding, and report collection. Missing Emscripten/wasm tooling must
+  fail with a named bootstrap diagnostic.
 
 verify-playgrounds [--all|--example NAME] [--report PATH]
   Run shared terminal/browser/headless playground scene gates.
@@ -412,8 +421,21 @@ verify-gui [--all|--example NAME] --backend headless|sdl3 [--report PATH]
   native shell or fail with a dependency/bridge diagnostic.
 
 verify-browser [--all|--example NAME] --browser firefox [--report PATH]
-  Verify the browser GUI playground in real Firefox, including nonblank canvas
-  proof and generated-runtime/source metadata.
+  Verify the legacy browser diagnostic playground in real Firefox. This command
+  does not satisfy the browser-WASM acceptance gate.
+
+verify-browser-wasm [--all|--example NAME] --browser firefox [--report PATH]
+  Verify the browser WASM playground in real Firefox, including WASM artifact
+  proof, nonblank rendering, input/tick evidence where applicable, and
+  generated-runtime/source metadata.
+
+verify-terminal [--all|--example NAME] [--report PATH]
+  Verify all canonical examples through the terminal target, including bounded
+  smoke/hash checks for terminal games.
+
+verify-all-targets --all-examples [--report PATH]
+  Verify every canonical example across terminal, native SDL3, and browser WASM.
+  This gate must fail if any target only has a diagnostic/fallback surface.
 
 play EXAMPLE_PATH
   Launch direct interactive full-screen terminal mode.
@@ -1778,11 +1800,14 @@ gleam run -- verify-durability examples/upstream/todo_mvc --store postgres
 ### Full-Stack Experiment
 
 ```text
-Terminal target works.
+Terminal target works for every canonical example.
+Native SDL3 target works for every canonical example.
+Browser WASM target works for every canonical example.
 Backend target works.
-Lustre durable client works.
-The same generated Boon core drives all targets.
-Counter and TodoMVC run through terminal, backend, and web-client targets.
+Lustre durable client works as a separate web-client experiment.
+The same generated Boon core drives all production targets.
+Counter and TodoMVC run through terminal, native SDL3, browser WASM, backend,
+and web-client experiment targets.
 Durability and replay tests pass.
 Structural guardrails pass.
 ```
@@ -1791,6 +1816,10 @@ Commands:
 
 ```bash
 gleam run -- verify-all
+gleam run -- verify-terminal --all --report build/reports/verify-terminal.json
+gleam run -- verify-gui --all --backend sdl3 --report build/reports/verify-gui-sdl3.json
+gleam run -- verify-browser-wasm --all --browser firefox --report build/reports/verify-browser-wasm-firefox.json
+gleam run -- verify-all-targets --all-examples --report build/reports/verify-all-targets.json
 gleam run -- verify-backend examples/upstream/todo_mvc --store postgres
 gleam run -- web examples/upstream/todo_mvc --mode durable-client
 ```
@@ -1842,9 +1871,10 @@ Use this prompt when asking Codex to create or continue the repository:
 Implement boon-gleam from BOON_GLEAM_IMPLEMENTATION_PLAN.md.
 
 Do not add Zig, Rust, Pony, Raybox, Sokol, WebGPU, Slang, GTK4,
-webview-only native playgrounds, or a custom Wasm runtime. SDL3 is allowed only
-for the native GUI playground shell defined in this plan. Gleam JS + Lustre and
-Canvas2D are allowed only for the browser target defined in this plan.
+webview-only native playgrounds, or a custom Wasm runtime. SDL3 is the only
+native GUI backend. Browser GUI completion requires a WASM artifact; Gleam JS,
+Lustre, and Canvas2D are allowed only for explicitly labeled diagnostic or
+client-experiment paths and must not be counted as browser-WASM completion.
 
 Start with Phase 0, then proceed phase by phase. Do not skip a phase acceptance
 gate. Keep all targets going through the same generated init/update/view core.

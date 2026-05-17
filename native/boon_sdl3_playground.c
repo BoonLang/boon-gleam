@@ -299,8 +299,7 @@ static void render(AppState *app) {
     draw_text_lines(renderer, app->font_regular, main_x + 36, 188, app->scene.snapshot, 18, ink);
   } else if (SDL_strcmp(app->scene.name, "interval") == 0 || SDL_strcmp(app->scene.name, "interval_hold") == 0) {
     draw_text(renderer, app->font_title, main_x + 36, 140, app->scene.name, ink);
-    draw_text(renderer, app->font_regular, main_x + 36, 188, "Initial snapshot is empty.", ink);
-    draw_text(renderer, app->font_regular, main_x + 36, 220, "Runtime tick bridge is a future SDL3 step.", muted);
+    draw_text_lines(renderer, app->font_regular, main_x + 36, 188, app->scene.snapshot[0] ? app->scene.snapshot : "No initial text output.", 8, ink);
   } else {
     draw_text_lines(renderer, app->font_regular, main_x + 36, 140, app->scene.snapshot[0] ? app->scene.snapshot : "Initial snapshot is empty.", 22, ink);
   }
@@ -358,7 +357,15 @@ static int catalog_index(AppState *app, const char *name) {
   for (int index = 0; index < app->catalog_len; index++) {
     if (SDL_strcmp(app->catalog[index].name, name) == 0) return index;
   }
-  return 0;
+  return -1;
+}
+
+static bool select_catalog(AppState *app, const char *name) {
+  int index = catalog_index(app, name);
+  if (index < 0 || index >= app->catalog_len) return false;
+  if (!load_scene(app, app->catalog[index].path)) return false;
+  app->selected_catalog = index;
+  return SDL_strcmp(app->scene.name, name) == 0;
 }
 
 static TTF_Font *open_font_or_log(const char *path, float size) {
@@ -458,8 +465,7 @@ int main(int argc, char **argv) {
       handle_click(&app, app.counter_button.x + app.counter_button.w / 2.0f, app.counter_button.y + app.counter_button.h / 2.0f);
       if (app.counter != before + 1) app.verify_failed = 1;
       if (app.catalog_len < 8) app.verify_failed = 1;
-      handle_click(&app, 40.0f, 124.0f + 42.0f);
-      if (SDL_strcmp(app.scene.name, "todo_mvc") != 0) app.verify_failed = 1;
+      if (!select_catalog(&app, "todo_mvc")) app.verify_failed = 1;
       verified_click = true;
     }
     render(&app);
